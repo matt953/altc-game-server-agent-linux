@@ -407,7 +407,38 @@ Config load_or_default(const std::string &source,
                 .profiles = profiles_atom};
 }
 
+
+static bool save_verified(const std::string &dest, const WolfConfig &tml) {
+  const auto serialized = rfl::toml::write(tml);
+  const auto reparsed = rfl::toml::read<WolfConfig, rfl::DefaultIfMissing>(serialized);
+  if (!reparsed) {
+    logs::log(logs::error, "Config save ABORTED ({}): output failed to re-parse: {}", dest, reparsed.error().what());
+    return false;
+  }
+  if (rfl::toml::write(reparsed.value()) != serialized) {
+    logs::log(logs::error, "Config save ABORTED ({}): round-trip mismatch, refusing to overwrite", dest);
+    return false;
+  }
+  const auto tmp = dest + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::trunc);
+    out << serialized;
+    if (!out.good()) {
+      logs::log(logs::error, "Config save ABORTED ({}): failed writing temp file", dest);
+      return false;
+    }
+  }
+  std::error_code ec;
+  std::filesystem::rename(tmp, dest, ec);
+  if (ec) {
+    logs::log(logs::error, "Config save FAILED ({}): {}", dest, ec.message());
+    return false;
+  }
+  return true;
+}
+
 void pair(const Config &cfg, const PairedClient &client) {
+
   // Update CFG
   cfg.paired_clients->update([&client](const PairedClientList &paired_clients) {
     // Removing the client if already present (see: https://github.com/games-on-whales/wolf/issues/211)
@@ -422,7 +453,7 @@ void pair(const Config &cfg, const PairedClient &client) {
   // Update TOML
   auto tml = rfl::toml::load<WolfConfig, rfl::DefaultIfMissing>(cfg.config_source).value();
   tml.paired_clients.push_back(client);
-  rfl::toml::save(cfg.config_source, tml);
+  save_verified(cfg.config_source, tml);
 }
 
 void unpair(const Config &cfg, const PairedClient &client) {
@@ -441,7 +472,7 @@ void unpair(const Config &cfg, const PairedClient &client) {
                                           tml.paired_clients.end(),
                                           [&client](const auto &v) { return v.client_cert == client.client_cert; }),
                            tml.paired_clients.end());
-  rfl::toml::save(cfg.config_source, tml);
+  save_verified(cfg.config_source, tml);
 }
 
 void update_client_settings(const Config &cfg, std::size_t client_id, const PairedClient &updated_client) {
@@ -467,34 +498,46 @@ void update_client_settings(const Config &cfg, std::size_t client_id, const Pair
                        ranges::to<std::vector<PairedClient>>();
 
   // Save back to file
-  rfl::toml::save(cfg.config_source, tml);
+  save_verified(cfg.config_source, tml);
 }
 
 void update_profiles(const Config &cfg, const ProfilesList &profiles) {
   cfg.profiles->store(profiles);
 
   auto tml = rfl::toml::load<WolfConfig, rfl::DefaultIfMissing>(cfg.config_source).value();
+  std::map<std::pair<std::string, std::string>, BaseApp> raw_apps;
+  for (const auto &prof : tml.profiles) {
+    for (const auto &a : prof.apps) {
+      raw_apps.emplace(std::make_pair(prof.id, a.title), a);
+    }
+  }
   tml.profiles = profiles | //
-                 ranges::views::transform([](const immer::box<events::Profile> &p) {
+                 ranges::views::transform([&raw_apps](const immer::box<events::Profile> &p) {
                    return Profile{
                        .id = p->id,
                        .name = p->name,
                        .icon_png_path = p->icon_png_path,
                        .pin = p->pin,
                        .apps = p->apps->load().get() | //
-                               ranges::views::transform([](const immer::box<events::App> &app) {
-                                 return BaseApp{.title = app->base.title,
-                                                .icon_png_path = app->base.icon_png_path,
-                                                .render_node = app->render_node,
-                                                .start_virtual_compositor = app->start_virtual_compositor,
-                                                .start_audio_server = app->start_audio_server,
-                                                .runner = app->runner->serialize()};
+                               ranges::views::transform([&raw_apps, &p](const immer::box<events::App> &app) {
+                                 // Start from the raw entry to keep fields the resolved form does not carry
+                                 BaseApp base{};
+                                 if (auto it = raw_apps.find({p->id, app->base.title}); it != raw_apps.end()) {
+                                   base = it->second;
+                                 }
+                                 base.title = app->base.title;
+                                 base.icon_png_path = app->base.icon_png_path;
+                                 base.render_node = app->render_node;
+                                 base.start_virtual_compositor = app->start_virtual_compositor;
+                                 base.start_audio_server = app->start_audio_server;
+                                 base.runner = app->runner->serialize();
+                                 return base;
                                }) | //
                                ranges::to_vector,
                    };
                  }) | //
                  ranges::to_vector;
-  rfl::toml::save(cfg.config_source, tml);
+  save_verified(cfg.config_source, tml);
 }
 
 } // namespace state

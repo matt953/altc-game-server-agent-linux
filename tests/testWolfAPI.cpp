@@ -806,3 +806,30 @@ TEST_CASE("SSE APIs", "[API]") {
   REQUIRE_THAT(event->event, Equals("wolf::core::events::IDRRequestEvent"));
   REQUIRE_THAT(event->data, Equals("{\"session_id\":\"42\"}"));
 }
+
+TEST_CASE("update_profiles preserves per-app video/audio overrides", "[TOML]") {
+  auto event_bus = std::make_shared<events::EventBusType>();
+  auto running_sessions = std::make_shared<immer::atom<immer::vector<events::StreamSession>>>();
+  auto config = state::load_or_default("config.test.toml", event_bus, running_sessions);
+  std::filesystem::copy_file("config.test.toml",
+                             "config.preserve.EDITED.toml",
+                             std::filesystem::copy_options::overwrite_existing);
+  config.config_source = "config.preserve.EDITED.toml";
+
+  // A no-op profiles update must not drop raw per-app fields
+  state::update_profiles(config, config.profiles->load().get());
+
+  auto reloaded =
+      rfl::toml::load<wolf::config::WolfConfig, rfl::DefaultIfMissing>("config.preserve.EDITED.toml").value();
+  bool found = false;
+  for (const auto &profile : reloaded.profiles) {
+    for (const auto &app : profile.apps) {
+      if (app.title == "Test ball") {
+        found = true;
+        REQUIRE(app.video.has_value());
+        CHECK(app.video->source.value() == "override DEFAULT SOURCE");
+      }
+    }
+  }
+  REQUIRE(found);
+}
