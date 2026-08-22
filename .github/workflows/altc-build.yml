@@ -3,6 +3,7 @@ name: Build altc game server agent image
 on:
   push:
     branches: [stable]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -23,14 +24,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - id: tags
+        run: |
+          TAGS="ghcr.io/matt953/altc-game-server-agent-linux:stable
+          ghcr.io/matt953/altc-game-server-agent-linux:sha-${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAGS="$TAGS
+          ghcr.io/matt953/altc-game-server-agent-linux:${GITHUB_REF#refs/tags/}"
+          fi
+          echo "list<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$TAGS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/wolf.Dockerfile
           platforms: linux/amd64
           push: true
-          tags: |
-            ghcr.io/matt953/altc-game-server-agent-linux:stable
-            ghcr.io/matt953/altc-game-server-agent-linux:latest
+          tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
