@@ -72,6 +72,12 @@ RUN --mount=type=cache,target=/cache/ccache \
     cp $CMAKE_BUILD_DIR/src/fake-udev/fake-udev /wolf/fake-udev
 
 ########################################################
+FROM rust:1-slim AS altc-builder
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake perl && rm -rf /var/lib/apt/lists/*
+WORKDIR /altc
+COPY altc/ .
+RUN cargo build --release
+
 FROM $BASE_IMAGE AS runner
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -120,6 +126,7 @@ ENV WOLF_CFG_FOLDER=/etc/wolf/cfg
 
 COPY --from=wolf-builder /wolf/wolf /wolf/wolf
 COPY --from=wolf-builder /wolf/fake-udev /wolf/fake-udev
+COPY --from=altc-builder /altc/target/release/altc-api /wolf/altc-api
 
 ENV GST_GL_API=gles2 \
     GST_GL_PLATFORM=egl \
