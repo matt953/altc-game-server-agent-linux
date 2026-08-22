@@ -73,16 +73,18 @@ static GstBusSyncReply bus_sync_handler(GstBus *bus, GstMessage *msg, gpointer d
 
 std::pair<std::string, std::string> get_color_params(immer::box<events::VideoSession> video_session) {
   std::string color_range = (video_session->color_range == events::ColorRange::JPEG) ? "jpeg" : "mpeg2";
+  // Colorimetry presets imply limited range; full-range sessions need the numeric form.
+  bool full_range = video_session->color_range == events::ColorRange::JPEG;
   std::string color_space;
   switch (video_session->color_space) {
   case events::ColorSpace::BT601:
-    color_space = "bt601";
+    color_space = full_range ? "1:4:16:4" : "bt601";
     break;
   case events::ColorSpace::BT709:
-    color_space = "bt709";
+    color_space = full_range ? "1:3:5:1" : "bt709";
     break;
   case events::ColorSpace::BT2020:
-    color_space = "bt2020";
+    color_space = full_range ? "1:6:13:7" : "bt2020";
     break;
   }
   return std::make_pair(color_range, color_space);
