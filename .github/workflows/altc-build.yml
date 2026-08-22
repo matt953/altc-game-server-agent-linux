@@ -26,8 +26,7 @@ jobs:
 
       - id: tags
         run: |
-          TAGS="ghcr.io/matt953/altc-game-server-agent-linux:stable
-          ghcr.io/matt953/altc-game-server-agent-linux:sha-${GITHUB_SHA::7}"
+          TAGS="ghcr.io/matt953/altc-game-server-agent-linux:stable"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAGS="$TAGS
           ghcr.io/matt953/altc-game-server-agent-linux:${GITHUB_REF#refs/tags/}"
@@ -45,3 +44,14 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  cleanup:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: altc-game-server-agent-linux
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 3
