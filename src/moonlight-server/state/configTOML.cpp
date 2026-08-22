@@ -512,7 +512,7 @@ void update_profiles(const Config &cfg, const ProfilesList &profiles) {
     }
   }
   tml.profiles = profiles | //
-                 ranges::views::transform([](const immer::box<events::Profile> &p) {
+                 ranges::views::transform([&raw_apps](const immer::box<events::Profile> &p) {
                    return Profile{
                        .id = p->id,
                        .name = p->name,
