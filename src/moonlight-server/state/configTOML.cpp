@@ -407,7 +407,6 @@ Config load_or_default(const std::string &source,
                 .profiles = profiles_atom};
 }
 
-
 static bool save_verified(const std::string &dest, const WolfConfig &tml) {
   const auto serialized = rfl::toml::write(tml);
   const auto reparsed = rfl::toml::read<WolfConfig, rfl::DefaultIfMissing>(serialized);

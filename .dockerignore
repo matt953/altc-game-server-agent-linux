@@ -1,6 +1,5 @@
 # Start by removing everything and add just the things we need
 *
-
 !src
 !Cargo.toml
 !cmake
@@ -8,5 +7,6 @@
 !.clang-format
 !docker/gstreamer.control
 !docker/startup.sh
-!docker/supervisord.conf!altc
+!docker/supervisord.conf
+!altc
 altc/target
