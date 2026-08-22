@@ -342,7 +342,8 @@ chroma-site={color_range}, format=NV12, colorimetry={color_space}, pixel-aspect-
 video_params_zero_copy = """
 cudaupload !
 cudaconvertscale add-borders=true !
-video/x-raw(memory:CUDAMemory),format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1
+video/x-raw(memory:CUDAMemory),format=NV12, chroma-site={color_range}, width={width}, height={height},
+colorimetry={color_space}, pixel-aspect-ratio=1/1
 """
 
 [gstreamer.video.defaults.qsv]
@@ -354,7 +355,8 @@ colorimetry={color_space}, pixel-aspect-ratio=1/1\
 
 video_params_zero_copy = """
 vapostproc add-borders=true !
-video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1\
+video/x-raw(memory:VAMemory), format=NV12, chroma-site={color_range}, width={width}, height={height},
+colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 [gstreamer.video.defaults.va]
@@ -366,7 +368,8 @@ colorimetry={color_space}, pixel-aspect-ratio=1/1\
 
 video_params_zero_copy = """
 vapostproc add-borders=true !
-video/x-raw(memory:VAMemory), format=NV12, width={width}, height={height}, pixel-aspect-ratio=1/1\
+video/x-raw(memory:VAMemory), format=NV12, chroma-site={color_range}, width={width}, height={height},
+colorimetry={color_space}, pixel-aspect-ratio=1/1\
 """
 
 ######################
