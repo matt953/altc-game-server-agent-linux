@@ -49,6 +49,196 @@ async fn setup(test: &str) -> (Router, String) {
     (routes::router(AppState { pool, wolf }), token)
 }
 
+fn authed(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn make_member(app: &Router, owner: &str, name: &str) -> (i64, String) {
+    let (_, body) = send(
+        app,
+        authed(
+            "POST",
+            "/api/v1/users",
+            owner,
+            &format!(r#"{{"name":"{name}"}}"#),
+        ),
+    )
+    .await;
+    (
+        body["user"]["id"].as_i64().unwrap(),
+        body["token"].as_str().unwrap().to_string(),
+    )
+}
+
+fn titles(body: &Value) -> Vec<String> {
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["title"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn apps_default_to_everyone() {
+    let (app, owner) = setup("shares_default").await;
+    let (_, member) = make_member(&app, &owner, "dave").await;
+    let (status, body) = send(&app, authed("GET", "/api/v1/apps", &member, "")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(titles(&body).len(), 2);
+
+    let (_, body) = send(
+        &app,
+        authed("GET", "/api/v1/apps/134906179/shares", &owner, ""),
+    )
+    .await;
+    assert_eq!(body["everyone"], true);
+    assert_eq!(body["user_ids"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn restricting_an_app_hides_it_from_others() {
+    let (app, owner) = setup("shares_restrict").await;
+    let (dave_id, dave) = make_member(&app, &owner, "dave").await;
+    let (_, erin) = make_member(&app, &owner, "erin").await;
+
+    let (status, body) = send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &owner,
+            &format!(r#"{{"user_ids":[{dave_id}]}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["everyone"], false);
+
+    // Dave keeps it, Erin loses it, admin still sees everything.
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &dave, "")).await;
+    assert!(titles(&body).contains(&"Baldur’s Gate 3".to_string()));
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &erin, "")).await;
+    assert_eq!(titles(&body), vec!["Wolf UI".to_string()]);
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &owner, "")).await;
+    assert_eq!(titles(&body).len(), 2);
+}
+
+#[tokio::test]
+async fn clearing_shares_restores_everyone() {
+    let (app, owner) = setup("shares_clear").await;
+    let (dave_id, _) = make_member(&app, &owner, "dave").await;
+    let (_, erin) = make_member(&app, &owner, "erin").await;
+
+    send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &owner,
+            &format!(r#"{{"user_ids":[{dave_id}]}}"#),
+        ),
+    )
+    .await;
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &erin, "")).await;
+    assert_eq!(titles(&body).len(), 1);
+
+    send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &owner,
+            r#"{"user_ids":[]}"#,
+        ),
+    )
+    .await;
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &erin, "")).await;
+    assert_eq!(titles(&body).len(), 2);
+}
+
+#[tokio::test]
+async fn share_edits_are_admin_only_and_validated() {
+    let (app, owner) = setup("shares_authz").await;
+    let (dave_id, dave) = make_member(&app, &owner, "dave").await;
+
+    let (status, _) = send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &dave,
+            &format!(r#"{{"user_ids":[{dave_id}]}}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        authed("GET", "/api/v1/apps/1354165435/shares", &dave, ""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/not-an-app/shares",
+            &owner,
+            r#"{"user_ids":[]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &owner,
+            r#"{"user_ids":[9999]}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn deleting_user_drops_their_shares() {
+    let (app, owner) = setup("shares_cascade").await;
+    let (dave_id, _) = make_member(&app, &owner, "dave").await;
+    send(
+        &app,
+        authed(
+            "PUT",
+            "/api/v1/apps/1354165435/shares",
+            &owner,
+            &format!(r#"{{"user_ids":[{dave_id}]}}"#),
+        ),
+    )
+    .await;
+    send(
+        &app,
+        authed("DELETE", &format!("/api/v1/users/{dave_id}"), &owner, ""),
+    )
+    .await;
+
+    let (_, body) = send(
+        &app,
+        authed("GET", "/api/v1/apps/1354165435/shares", &owner, ""),
+    )
+    .await;
+    assert_eq!(body["everyone"], true);
+}
+
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {
     let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();

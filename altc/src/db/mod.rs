@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod shares;
 pub mod tokens;
 pub mod users;
 
@@ -51,6 +52,12 @@ async fn schema(pool: &SqlitePool) {
             client_id TEXT NOT NULL UNIQUE,
             name TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        -- No rows for an app_id = shared with everyone (default).
+        CREATE TABLE IF NOT EXISTS app_shares (
+            app_id TEXT NOT NULL,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (app_id, user_id)
         );",
     )
     .execute(pool)
