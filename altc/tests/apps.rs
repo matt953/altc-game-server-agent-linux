@@ -46,7 +46,14 @@ async fn setup(test: &str) -> (Router, String) {
     let id = db::users::insert(&pool, "owner", "owner").await.unwrap();
     let token = db::tokens::issue(&pool, id, "test").await.unwrap();
     let wolf = WolfClient::new(socket);
-    (routes::router(AppState { pool, wolf }), token)
+    (
+        routes::router(AppState {
+            pool,
+            wolf,
+            events: altc_api::events::EventHub::new(),
+        }),
+        token,
+    )
 }
 
 fn authed(method: &str, uri: &str, token: &str, body: &str) -> Request<Body> {

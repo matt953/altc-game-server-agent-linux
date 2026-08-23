@@ -115,6 +115,44 @@ impl WolfClient {
             .ok_or_else(|| WolfError("pair response missing client_id".into()))
     }
 
+    // Reads Wolf's SSE stream: `on_connect` fires once the stream is open,
+    // then `on_event(event_type, data)` per frame.
+    pub async fn stream_events<C, F>(&self, on_connect: C, mut on_event: F) -> Result<(), WolfError>
+    where
+        C: FnOnce(),
+        F: FnMut(&str, &Value),
+    {
+        let uri: hyper::Uri = Uri::new(&self.socket, "/api/v1/events").into();
+        let req = hyper::Request::get(uri)
+            .header("accept", "text/event-stream")
+            .body(Full::new(Bytes::new()))
+            .map_err(|e| WolfError(e.to_string()))?;
+        let res = self
+            .http
+            .request(req)
+            .await
+            .map_err(|e| WolfError(e.to_string()))?;
+
+        on_connect();
+        let mut body = res.into_body();
+        let mut buf = String::new();
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|e| WolfError(e.to_string()))?;
+            let Some(chunk) = frame.data_ref() else {
+                continue;
+            };
+            buf.push_str(&String::from_utf8_lossy(chunk));
+            while let Some(idx) = buf.find("\n\n") {
+                let raw = buf[..idx].to_string();
+                buf.drain(..idx + 2);
+                if let Some((kind, data)) = parse_sse(&raw) {
+                    on_event(&kind, &data);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn apps(&self) -> Result<Vec<WolfApp>, WolfError> {
         let v = self.request("GET", "/api/v1/apps", None).await?;
         serde_json::from_value(v["apps"].clone()).map_err(|e| WolfError(e.to_string()))
@@ -134,4 +172,17 @@ impl WolfClient {
         .await
         .map(|_| ())
     }
+}
+
+fn parse_sse(raw: &str) -> Option<(String, Value)> {
+    let mut kind = None;
+    let mut data = None;
+    for line in raw.lines() {
+        if let Some(v) = line.strip_prefix("event: ") {
+            kind = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("data: ") {
+            data = serde_json::from_str(v.trim()).ok();
+        }
+    }
+    Some((kind?, data?))
 }

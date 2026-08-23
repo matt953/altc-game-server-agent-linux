@@ -1,4 +1,5 @@
 mod apps;
+mod events;
 mod me;
 mod pairing;
 mod users;
@@ -18,6 +19,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users", get(users::list).post(users::create))
         .route("/api/v1/users/{id}", delete(users::remove))
         .route("/api/v1/users/{id}/tokens", post(users::rotate_token))
+        .route("/api/v1/events", get(events::stream))
         .route("/api/v1/apps", get(apps::list))
         .route(
             "/api/v1/apps/{app_id}/shares",

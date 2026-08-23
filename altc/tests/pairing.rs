@@ -79,6 +79,7 @@ async fn setup(test: &str) -> (Router, String, FakeWolf, sqlx::SqlitePool) {
     let app = routes::router(AppState {
         pool: pool.clone(),
         wolf,
+        events: altc_api::events::EventHub::new(),
     });
     (app, token, fake, pool)
 }

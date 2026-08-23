@@ -13,7 +13,14 @@ async fn setup() -> (Router, String) {
     let id = db::users::insert(&pool, "owner", "owner").await.unwrap();
     let token = db::tokens::issue(&pool, id, "test").await.unwrap();
     let wolf = WolfClient::new("/nonexistent/wolf.sock".into());
-    (routes::router(AppState { pool, wolf }), token)
+    (
+        routes::router(AppState {
+            pool,
+            wolf,
+            events: altc_api::events::EventHub::new(),
+        }),
+        token,
+    )
 }
 
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["tokio"] }
 axum-server = { version = "0.7", features = ["tls-rustls"] }
 tokio = { version = "1", features = ["full"] }
 rcgen = "0.13"
@@ -20,6 +20,8 @@ hyper = { version = "1.11.0", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["client-legacy", "tokio"] }
 hyperlocal = "0.9.1"
 http-body-util = "0.1.5"
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+futures-util = "0.3.34"
 
 [profile.release]
 strip = true
