@@ -34,6 +34,16 @@ pub struct PairedClient {
     pub app_state_folder: String,
 }
 
+// Trimmed from Wolf's full app object; pipelines/runner internals never leave the agent.
+#[derive(Deserialize, serde::Serialize)]
+pub struct WolfApp {
+    pub id: String,
+    pub title: String,
+    pub support_hdr: bool,
+    #[serde(default)]
+    pub icon_png_path: Option<String>,
+}
+
 impl WolfClient {
     pub fn from_env() -> Self {
         let socket = std::env::var("WOLF_SOCKET_PATH").unwrap_or_else(|_| {
@@ -103,6 +113,11 @@ impl WolfClient {
             .as_str()
             .map(String::from)
             .ok_or_else(|| WolfError("pair response missing client_id".into()))
+    }
+
+    pub async fn apps(&self) -> Result<Vec<WolfApp>, WolfError> {
+        let v = self.request("GET", "/api/v1/apps", None).await?;
+        serde_json::from_value(v["apps"].clone()).map_err(|e| WolfError(e.to_string()))
     }
 
     pub async fn paired_clients(&self) -> Result<Vec<PairedClient>, WolfError> {
