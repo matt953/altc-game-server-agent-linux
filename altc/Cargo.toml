@@ -19,3 +19,7 @@ hex = "0.4.3"
 
 [profile.release]
 strip = true
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tower = { version = "0.5.3", features = ["util"] }
