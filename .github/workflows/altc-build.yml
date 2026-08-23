@@ -2,7 +2,7 @@ name: Build altc game server agent image
 
 on:
   push:
-    branches: [stable]
+    branches: [stable, 'feat/altc-*']
     tags: ['v*']
   workflow_dispatch:
 
@@ -26,7 +26,11 @@ jobs:
 
       - id: tags
         run: |
-          TAGS="ghcr.io/matt953/altc-game-server-agent-linux:stable"
+          if [[ "$GITHUB_REF" == refs/heads/feat/altc-* ]]; then
+            TAGS="ghcr.io/matt953/altc-game-server-agent-linux:dev"
+          else
+            TAGS="ghcr.io/matt953/altc-game-server-agent-linux:stable"
+          fi
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAGS="$TAGS
           ghcr.io/matt953/altc-game-server-agent-linux:${GITHUB_REF#refs/tags/}"
