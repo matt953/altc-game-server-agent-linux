@@ -1,6 +1,6 @@
 use crate::wolf::WolfClient;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
@@ -16,6 +16,8 @@ pub struct EventHub {
     tx: broadcast::Sender<LaunchEvent>,
     // Only StreamSession carries app_id; remember it for the follow-up events.
     apps: Arc<Mutex<HashMap<String, String>>>,
+    // Wolf fires ResumeStream during session setup too; only a real un-pause counts.
+    paused: Arc<Mutex<HashSet<String>>>,
 }
 
 impl EventHub {
@@ -23,6 +25,7 @@ impl EventHub {
         Self {
             tx: broadcast::channel(256).0,
             apps: Arc::new(Mutex::new(HashMap::new())),
+            paused: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -32,8 +35,16 @@ impl EventHub {
 
     pub fn publish(&self, kind: &str, data: &Value) {
         let Some((client_id, state)) = translate(kind, data) else {
+            tracing::debug!("wolf event ignored: {kind}");
             return;
         };
+        match state {
+            "paused" => {
+                self.paused.lock().unwrap().insert(client_id.clone());
+            }
+            "resumed" if !self.paused.lock().unwrap().remove(&client_id) => return,
+            _ => {}
+        }
         let app_id = match data.get("app_id").and_then(|v| v.as_str()) {
             Some(a) => {
                 self.apps
@@ -46,6 +57,7 @@ impl EventHub {
         };
         if state == "stopped" {
             self.apps.lock().unwrap().remove(&client_id);
+            self.paused.lock().unwrap().remove(&client_id);
         }
         let _ = self.tx.send(LaunchEvent {
             client_id,
@@ -63,9 +75,10 @@ impl Default for EventHub {
 
 // Wolf event -> (client_id, client-facing state). Unmapped events are dropped:
 // Wolf's raw payloads carry session secrets and must never be proxied through.
+// Wire names are namespaced ("wolf::core::events::StreamSession"); match the leaf.
 fn translate(kind: &str, data: &Value) -> Option<(String, &'static str)> {
     let id = |key: &str| data.get(key).map(stringify_id);
-    match kind {
+    match kind.rsplit("::").next()? {
         "StreamSession" => Some((id("client_id")?, "connecting")),
         "StartRunner" => Some((id("session_id")?, "launching")),
         "DockerContainerCreated" => Some((id("session_id")?, "container_started")),

@@ -145,6 +145,10 @@ impl WolfClient {
             while let Some(idx) = buf.find("\n\n") {
                 let raw = buf[..idx].to_string();
                 buf.drain(..idx + 2);
+                tracing::debug!(
+                    "wolf sse frame: {}",
+                    raw.chars().take(120).collect::<String>()
+                );
                 if let Some((kind, data)) = parse_sse(&raw) {
                     on_event(&kind, &data);
                 }

@@ -10,7 +10,11 @@ use std::{fs, net::SocketAddr, path::PathBuf};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
 
     let state_dir = PathBuf::from(
         std::env::var("HOST_APPS_STATE_FOLDER").unwrap_or_else(|_| "/etc/wolf".into()),

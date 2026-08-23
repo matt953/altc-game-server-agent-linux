@@ -86,10 +86,10 @@ async fn wolf_events_translate_to_launch_states() {
         &owner,
         &hub,
         vec![
-            ("StreamSession", json!({"client_id": "dev1", "app_id": "639825709", "aes_key": "SECRET", "aes_iv": "SECRET"})),
-            ("StartRunner", json!({"session_id": "dev1"})),
-            ("DockerContainerCreated", json!({"session_id": "dev1", "container_id": "abc"})),
-            ("DockerContainerStopped", json!({"session_id": "dev1"})),
+            ("wolf::core::events::StreamSession", json!({"client_id": "dev1", "app_id": "639825709", "aes_key": "SECRET", "aes_iv": "SECRET"})),
+            ("wolf::core::events::StartRunner", json!({"session_id": "dev1"})),
+            ("wolf::core::events::DockerContainerCreated", json!({"session_id": "dev1", "container_id": "abc"})),
+            ("wolf::core::events::DockerContainerStopped", json!({"session_id": "dev1"})),
         ],
     )
     .await;
@@ -142,7 +142,10 @@ async fn unmapped_events_are_dropped() {
                 "PairSignal",
                 json!({"client_ip": "10.0.0.1", "host_ip": "10.0.0.2"}),
             ),
-            ("RTPVideoPingEvent", json!({"client_ip": "10.0.0.1"})),
+            (
+                "wolf::core::events::RTPVideoPingEvent",
+                json!({"client_ip": "10.0.0.1"}),
+            ),
             (
                 "VideoSession",
                 json!({"session_id": "dev1", "aes_key": "SECRET"}),
@@ -172,8 +175,14 @@ async fn members_only_see_their_own_devices() {
     });
 
     let emit = vec![
-        ("StartRunner", json!({"session_id": "dave-dev"})),
-        ("StartRunner", json!({"session_id": "someone-else"})),
+        (
+            "wolf::core::events::StartRunner",
+            json!({"session_id": "dave-dev"}),
+        ),
+        (
+            "wolf::core::events::StartRunner",
+            json!({"session_id": "someone-else"}),
+        ),
     ];
 
     let dave_saw = collect_events(&app, &dave, &events, emit.clone()).await;
@@ -182,4 +191,56 @@ async fn members_only_see_their_own_devices() {
 
     let owner_saw = collect_events(&app, &owner, &events, emit).await;
     assert_eq!(owner_saw.len(), 2, "admins see every session");
+}
+
+#[tokio::test]
+async fn spurious_resume_at_session_start_is_suppressed() {
+    let (app, hub, owner, _) = setup().await;
+    // Real launch order observed in production 2026-08-23: Wolf fires
+    // ResumeStream during setup, before the runner even starts.
+    let got = collect_events(
+        &app,
+        &owner,
+        &hub,
+        vec![
+            (
+                "wolf::core::events::StreamSession",
+                json!({"client_id": "d1", "app_id": "a1"}),
+            ),
+            (
+                "wolf::core::events::ResumeStreamEvent",
+                json!({"session_id": "d1"}),
+            ),
+            (
+                "wolf::core::events::StartRunner",
+                json!({"session_id": "d1"}),
+            ),
+        ],
+    )
+    .await;
+    let states: Vec<&str> = got.iter().map(|e| e["state"].as_str().unwrap()).collect();
+    assert_eq!(states, vec!["connecting", "launching"]);
+}
+
+#[tokio::test]
+async fn genuine_pause_resume_pair_surfaces() {
+    let (app, hub, owner, _) = setup().await;
+    let got = collect_events(
+        &app,
+        &owner,
+        &hub,
+        vec![
+            (
+                "wolf::core::events::PauseStreamEvent",
+                json!({"session_id": "d1"}),
+            ),
+            (
+                "wolf::core::events::ResumeStreamEvent",
+                json!({"session_id": "d1"}),
+            ),
+        ],
+    )
+    .await;
+    let states: Vec<&str> = got.iter().map(|e| e["state"].as_str().unwrap()).collect();
+    assert_eq!(states, vec!["paused", "resumed"]);
 }
