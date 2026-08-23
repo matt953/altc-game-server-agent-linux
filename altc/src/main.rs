@@ -10,9 +10,14 @@ use std::{fs, net::SocketAddr, path::PathBuf};
 
 #[tokio::main]
 async fn main() {
+    // ALTC_LOG, not RUST_LOG: the agent image sets RUST_LOG=WARN for the
+    // Wayland compositor, which would silence us.
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::builder()
+                .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+                .with_env_var("ALTC_LOG")
+                .from_env_lossy(),
         )
         .init();
 
