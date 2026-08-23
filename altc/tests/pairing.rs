@@ -307,6 +307,18 @@ async fn pairing_requires_auth_but_not_admin() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // Members see pending pairs (needed for self-approval) but not the admin client list.
     let (status, _) = send(&app, authed("GET", "/api/v1/pair/pending", &member, "")).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send(&app, authed("GET", "/api/v1/clients", &member, "")).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(
+        &app,
+        Request::get("/api/v1/pair/pending")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }

@@ -9,9 +9,10 @@ use axum::{
 };
 use serde_json::{Value, json};
 
+// Any authed user: self-pairing needs the pair_secret, which only the server knows.
 pub async fn pending(
     State(s): State<AppState>,
-    _admin: AdminUser,
+    _user: User,
 ) -> Result<Json<Vec<PendingPair>>, ApiError> {
     Ok(Json(s.wolf.pending_pair_requests().await?))
 }
