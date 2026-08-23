@@ -50,6 +50,46 @@ inline std::vector<std::string_view> split(std::string_view str, char separator)
 }
 
 /**
+ * Makes a string usable as a single filesystem path component.
+ * Only characters that can't survive the round trip are touched: path separators
+ * and ':', which would otherwise split a docker "source:destination:mode" bind.
+ */
+inline std::string sanitize_path_component(std::string_view name) {
+  std::string result;
+  result.reserve(name.size());
+  for (unsigned char c : name) {
+    bool illegal = c == '/' || c == '\\' || c == ':' || c < 0x20 || c == 0x7f;
+    result.push_back(illegal ? '_' : static_cast<char>(c));
+  }
+  if (result.empty() || result == "." || result == "..") {
+    result.insert(result.begin(), '_');
+  }
+  return result;
+}
+
+/**
+ * True when a caller-supplied path can be safely appended to a state folder:
+ * relative, no traversal, and free of ':' (docker binds are ':' delimited).
+ */
+inline bool is_safe_state_folder(std::string_view path) {
+  if (path.empty() || path.front() == '/' || path.find(':') != std::string_view::npos) {
+    return false;
+  }
+  for (std::size_t start = 0; start <= path.size();) {
+    auto end = path.find('/', start);
+    auto segment = path.substr(start, end == std::string_view::npos ? end : end - start);
+    if (segment == "..") {
+      return false;
+    }
+    if (end == std::string_view::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return true;
+}
+
+/**
  * Copies out a string_view content back to a string
  * This differs from using .data() since it'll add the terminator
  */

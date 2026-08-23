@@ -123,6 +123,14 @@ setup_lobbies_handlers(const immer::box<state::AppState> &app_state,
                   return;
                 }
 
+                if (!utils::is_safe_state_folder(lobby_settings->runner_state_folder)) {
+                  logs::log(logs::error,
+                            "[LOBBY] Refusing runner_state_folder '{}': must be relative, without '..' or ':'",
+                            lobby_settings->runner_state_folder);
+                  ev_bus->fire_event(immer::box<events::StopLobbyEvent>{events::StopLobbyEvent{.lobby_id = lobby->id}});
+                  return;
+                }
+
                 { // Start runner
                   logs::log(logs::debug, "[LOBBY] Start runner");
                   auto full_path = std::filesystem::path(host->local_base_state_folder) /

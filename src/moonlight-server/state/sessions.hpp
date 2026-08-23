@@ -74,8 +74,10 @@ inline std::shared_ptr<events::StreamSession> create_stream_session(immer::box<s
                                                                     int audio_channel_count,
                                                                     const std::string &aes_key,
                                                                     const std::string &aes_iv) {
+  // The title reaches docker as part of a ':' delimited bind; keep it path-safe.
+  auto app_folder_name = utils::sanitize_path_component(run_app.base.title);
   auto full_path = std::filesystem::path(state->host->local_base_state_folder) / current_client.app_state_folder /
-                   run_app.base.title;
+                   app_folder_name;
   logs::log(logs::debug, "Host app state folder: {}, creating paths", full_path.string());
   std::filesystem::create_directories(full_path);
 
@@ -101,7 +103,7 @@ inline std::shared_ptr<events::StreamSession> create_stream_session(immer::box<s
       .app = std::make_shared<events::App>(run_app),
       .app_local_state_folder = full_path.string(),
       .app_host_state_folder = std::filesystem::path(state->host->host_base_state_folder) /
-                               current_client.app_state_folder / run_app.base.title,
+                               current_client.app_state_folder / app_folder_name,
 
       .aes_key = aes_key,
       .aes_iv = aes_iv,

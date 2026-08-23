@@ -102,7 +102,8 @@ In this case, the app’s data will be stored in `/mnt/drive/wolf/profile_data/$
 These two variables are defined as follows:
 
 * `profile_id`: a unique identifier for each user profile, see: xref:_profiles[]
-* `app_title`: the title of the app as defined in the `config.toml` file, see: xref:_defining_apps[]
+* `app_title`: the title of the app as defined in the `config.toml` file, see: xref:_defining_apps[] +
+Characters that can't be used in a folder name are replaced with `_`: path separators (`/`, `\`), control characters, and `:` (which would otherwise split the bind mount specification). A title such as `Wolfenstein: The New Order` therefore stores its data under `Wolfenstein_ The New Order`.
 
 == TOML file
 

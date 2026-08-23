@@ -34,6 +34,14 @@ inline void tag_invoke(value_from_tag, value &jv, const std::vector<docker::Port
 }
 
 inline void tag_invoke(value_from_tag, value &jv, const docker::MountPoint &mount) {
+  // Binds are ':' delimited: a ':' in either path silently shifts the fields and
+  // docker rejects the whole spec. Name the culprit rather than leaving a 500.
+  if (mount.source.find(':') != std::string::npos || mount.destination.find(':') != std::string::npos) {
+    logs::log(logs::error,
+              "Invalid mount: ':' is not allowed in a bind path (source: '{}', destination: '{}')",
+              mount.source,
+              mount.destination);
+  }
   jv = fmt::format("{}:{}:{}", mount.source, mount.destination, mount.mode);
 }
 
