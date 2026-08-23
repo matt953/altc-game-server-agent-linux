@@ -25,6 +25,7 @@ impl std::fmt::Display for WolfError {
 pub struct PendingPair {
     pub pair_secret: String,
     pub client_ip: String,
+    pub client_id: String,
 }
 
 #[derive(Deserialize, serde::Serialize)]
@@ -90,14 +91,18 @@ impl WolfClient {
         serde_json::from_value(v["requests"].clone()).map_err(|e| WolfError(e.to_string()))
     }
 
-    pub async fn pair(&self, pair_secret: &str, pin: &str) -> Result<(), WolfError> {
-        self.request(
-            "POST",
-            "/api/v1/pair/client",
-            Some(json!({"pair_secret": pair_secret, "pin": pin})),
-        )
-        .await
-        .map(|_| ())
+    pub async fn pair(&self, pair_secret: &str, pin: &str) -> Result<String, WolfError> {
+        let v = self
+            .request(
+                "POST",
+                "/api/v1/pair/client",
+                Some(json!({"pair_secret": pair_secret, "pin": pin})),
+            )
+            .await?;
+        v["client_id"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| WolfError("pair response missing client_id".into()))
     }
 
     pub async fn paired_clients(&self) -> Result<Vec<PairedClient>, WolfError> {

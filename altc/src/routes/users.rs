@@ -1,5 +1,5 @@
 use crate::auth::AdminUser;
-use crate::db::{tokens, users, users::User};
+use crate::db::{devices, tokens, users, users::User};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
@@ -56,6 +56,14 @@ pub async fn remove(
         .map_err(|_| ApiError::not_found("no such user"))?;
     if target.role == "owner" {
         return Err(ApiError::bad_request("owner cannot be deleted"));
+    }
+    // Revocation kills both channels: unpair certs in Wolf before dropping the account.
+    for client_id in devices::client_ids_for_user(&s.pool, id).await? {
+        s.wolf.unpair(&client_id).await?;
+        tracing::info!(
+            "device '{client_id}' unpaired (user '{}' deletion)",
+            target.name
+        );
     }
     users::remove(&s.pool, id).await?;
     tracing::info!("user '{}' deleted by '{}'", target.name, actor.name);

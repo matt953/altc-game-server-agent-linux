@@ -1,3 +1,4 @@
+pub mod devices;
 pub mod tokens;
 pub mod users;
 
@@ -43,6 +44,13 @@ async fn schema(pool: &SqlitePool) {
             label TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             last_used_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS devices (
+            id INTEGER PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            client_id TEXT NOT NULL UNIQUE,
+            name TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );",
     )
     .execute(pool)
