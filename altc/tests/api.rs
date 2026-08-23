@@ -1,4 +1,4 @@
-use altc_api::{db, routes, state::AppState};
+use altc_api::{db, routes, state::AppState, wolf::WolfClient};
 use axum::{
     Router,
     body::Body,
@@ -12,7 +12,8 @@ async fn setup() -> (Router, String) {
     let pool = db::init_memory().await;
     let id = db::users::insert(&pool, "owner", "owner").await.unwrap();
     let token = db::tokens::issue(&pool, id, "test").await.unwrap();
-    (routes::router(AppState { pool }), token)
+    let wolf = WolfClient::new("/nonexistent/wolf.sock".into());
+    (routes::router(AppState { pool, wolf }), token)
 }
 
 async fn send(app: &Router, req: Request<Body>) -> (StatusCode, Value) {

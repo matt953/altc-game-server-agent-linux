@@ -31,6 +31,12 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
+impl From<crate::wolf::WolfError> for ApiError {
+    fn from(e: crate::wolf::WolfError) -> Self {
+        Self(StatusCode::BAD_GATEWAY, e.to_string())
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, Json(json!({"error": self.1}))).into_response()

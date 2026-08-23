@@ -1,4 +1,4 @@
-use altc_api::{db, routes, state::AppState, tls};
+use altc_api::{db, routes, state::AppState, tls, wolf::WolfClient};
 use std::{fs, net::SocketAddr, path::PathBuf};
 
 #[tokio::main]
@@ -20,7 +20,10 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(47990);
 
-    let app = routes::router(AppState { pool });
+    let app = routes::router(AppState {
+        pool,
+        wolf: WolfClient::from_env(),
+    });
     let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
         .await
         .expect("load tls cert");
