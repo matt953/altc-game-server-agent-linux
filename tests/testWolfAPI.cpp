@@ -147,18 +147,24 @@ TEST_CASE("Pair APIs", "[API]") {
                       "\"motion_controller_override\":\"AUTO\"}}]}"));
 
   auto pair_promise = std::make_shared<boost::promise<std::string>>();
+  auto fake_cert = std::string{"-----FAKE CERT-----"};
+  auto expected_client_id = std::to_string(std::hash<std::string>{}(fake_cert));
 
   // Simulate a Moonlight pairing request
-  app_state->pairing_atom->update([pair_promise](auto pairing_map) {
+  app_state->pairing_atom->update([pair_promise, fake_cert](auto pairing_map) {
     return pairing_map.set("secret",
-                           immer::box<events::PairSignal>{
-                               events::PairSignal{.client_ip = "1234", .host_ip = "5678", .user_pin = pair_promise}});
+                           immer::box<events::PairSignal>{events::PairSignal{.client_ip = "1234",
+                                                                             .host_ip = "5678",
+                                                                             .client_cert = fake_cert,
+                                                                             .user_pin = pair_promise}});
   });
 
   response = req(curl.get(), HTTPMethod::GET, "http://localhost/api/v1/pair/pending");
   REQUIRE(response);
   REQUIRE_THAT(response->second,
-               Equals("{\"success\":true,\"requests\":[{\"pair_secret\":\"secret\",\"client_ip\":\"1234\"}]}"));
+               Equals(fmt::format("{{\"success\":true,\"requests\":[{{\"pair_secret\":\"secret\",\"client_ip\":"
+                                  "\"1234\",\"client_id\":\"{}\"}}]}}",
+                                  expected_client_id)));
 
   // Let's complete the pairing process
   response = req(curl.get(),
@@ -166,7 +172,7 @@ TEST_CASE("Pair APIs", "[API]") {
                  "http://localhost/api/v1/pair/client",
                  "{\"pair_secret\":\"secret\",\"pin\":\"1234\"}");
   REQUIRE(response);
-  REQUIRE_THAT(response->second, Equals("{\"success\":true}"));
+  REQUIRE_THAT(response->second, Equals(fmt::format("{{\"success\":true,\"client_id\":\"{}\"}}", expected_client_id)));
   REQUIRE(pair_promise->get_future().get() == "1234");
   REQUIRE(app_state->config.get().paired_clients->load().get().size() == 1);
 

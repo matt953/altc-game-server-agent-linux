@@ -27,6 +27,7 @@ namespace wolf::core::events {
 struct PairSignal {
   std::string client_ip;
   std::string host_ip;
+  std::string client_cert;
   std::shared_ptr<boost::promise<std::string>> user_pin;
 };
 

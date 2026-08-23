@@ -15,6 +15,7 @@ void start_server(std::string_view runtime_dir, immer::box<state::AppState> app_
 struct PendingPairClient {
   std::string pair_secret;
   rfl::Description<"The IP of the remote Moonlight client", std::string> client_ip;
+  rfl::Description<"The client ID this device will have once paired", std::string> client_id;
 };
 
 struct PairRequest {
@@ -28,6 +29,11 @@ struct UnpairClientRequest {
 
 struct GenericSuccessResponse {
   bool success = true;
+};
+
+struct PairResponse {
+  bool success = true;
+  rfl::Description<"The client ID of the newly paired device", std::string> client_id;
 };
 
 struct GenericErrorResponse {

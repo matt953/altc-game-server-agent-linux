@@ -46,7 +46,7 @@ UnixSocketServer::UnixSocketServer(boost::asio::io_context &io_context,
                    {
                        .summary = "Pair a client",
                        .request_description = APIDescription{.json_schema = rfl::json::to_schema<PairRequest>()},
-                       .response_description = {{200, {.json_schema = rfl::json::to_schema<GenericSuccessResponse>()}},
+                       .response_description = {{200, {.json_schema = rfl::json::to_schema<PairResponse>()}},
                                                 {500, {.json_schema = rfl::json::to_schema<GenericErrorResponse>()}}},
                        .handler = [this](auto req, auto socket) { endpoint_Pair(req, socket); },
                    });

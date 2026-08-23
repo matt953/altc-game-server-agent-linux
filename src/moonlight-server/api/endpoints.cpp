@@ -20,7 +20,9 @@ void UnixSocketServer::endpoint_Events(const HTTPRequest &req, std::shared_ptr<U
 void UnixSocketServer::endpoint_PendingPairRequest(const HTTPRequest &req, std::shared_ptr<UnixSocket> socket) {
   auto requests = std::vector<PendingPairClient>();
   for (auto [secret, pair_request] : *(state_->app_state)->pairing_atom->load()) {
-    requests.push_back({.pair_secret = secret, .client_ip = pair_request->client_ip});
+    requests.push_back({.pair_secret = secret,
+                        .client_ip = pair_request->client_ip,
+                        .client_id = std::to_string(std::hash<std::string>{}(pair_request->client_cert))});
   }
   send_http(socket, 200, rfl::json::write(PendingPairRequestsResponse{.requests = requests}));
 }
@@ -29,10 +31,11 @@ void UnixSocketServer::endpoint_Pair(const HTTPRequest &req, std::shared_ptr<Uni
   auto event = rfl::json::read<PairRequest>(req.body);
   if (event) {
     if (auto pair_request = state_->app_state->pairing_atom->load()->find(event.value().pair_secret)) {
+      auto client_id = std::to_string(std::hash<std::string>{}(pair_request->get().client_cert));
       pair_request->get().user_pin->set_value(event.value().pin.value()); // Resolve the promise
       state_->app_state->pairing_atom->update(
           [pair_secret = event.value().pair_secret](auto pairing_map) { return pairing_map.erase(pair_secret); });
-      auto res = GenericSuccessResponse{.success = true};
+      auto res = PairResponse{.success = true, .client_id = client_id};
       send_http(socket, 200, rfl::json::write(res));
     } else {
       logs::log(logs::warning, "[API] Invalid pair secret: {}", event.value().pair_secret);

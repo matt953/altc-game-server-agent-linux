@@ -118,17 +118,18 @@ std::shared_ptr<boost::promise<XMLResult>> pair_phase1(const immer::box<state::A
     return future_result;
   }
 
+  auto client_cert_parsed = crypto::hex_to_str(client_cert_str, true);
   auto future_pin = std::make_shared<boost::promise<std::string>>();
   state->event_bus->fire_event( // Emit a signal and wait for the promise to be fulfilled
-      immer::box<events::PairSignal>(
-          events::PairSignal{.client_ip = client_ip, .host_ip = host_ip, .user_pin = future_pin}));
+      immer::box<events::PairSignal>(events::PairSignal{.client_ip = client_ip,
+                                                        .host_ip = host_ip,
+                                                        .client_cert = client_cert_parsed,
+                                                        .user_pin = future_pin}));
 
   future_pin->get_future().then(
-      [state, salt, client_cert_str, cache_key, future_result](boost::future<std::string> fut_pin) {
+      [state, salt, client_cert_parsed, cache_key, future_result](boost::future<std::string> fut_pin) {
         auto server_pem = x509::get_cert_pem(state->host->server_cert);
         auto result = moonlight::pair::get_server_cert(fut_pin.get(), salt, server_pem);
-
-        auto client_cert_parsed = crypto::hex_to_str(client_cert_str, true);
 
         state->pairing_cache->update([&](const immer::map<std::string, state::PairCache> &pairing_cache) {
           return pairing_cache.set(cache_key,
