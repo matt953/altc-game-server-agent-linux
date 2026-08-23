@@ -48,9 +48,15 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Attestations push untagged manifest children that the cleanup job
+          # would delete, breaking the tag (hit 2026-08-23).
+          provenance: false
+          sbom: false
 
   cleanup:
     needs: build
+    if: github.ref == 'refs/heads/stable'
+    concurrency: altc-package-cleanup
     runs-on: ubuntu-latest
     steps:
       - uses: actions/delete-package-versions@v5
@@ -58,4 +64,4 @@ jobs:
           package-name: altc-game-server-agent-linux
           package-type: container
           delete-only-untagged-versions: 'true'
-          min-versions-to-keep: 3
+          min-versions-to-keep: 5
