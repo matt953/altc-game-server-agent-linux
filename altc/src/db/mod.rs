@@ -30,7 +30,39 @@ pub async fn init_memory() -> SqlitePool {
     pool
 }
 
+/// The library is fully re-derivable from Wolf on the next connect, so a games
+/// table from an older shape is dropped rather than migrated. app_shares is
+/// keyed by app id and survives, because the ids do not change.
+/// This is only safe while nothing but an import writes games: once games can
+/// be authored over the API (M3), this must become a real migration.
+async fn migrate_games(pool: &SqlitePool) {
+    let exists: Option<String> =
+        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='games'")
+            .fetch_optional(pool)
+            .await
+            .expect("check games table");
+    if exists.is_none() {
+        return;
+    }
+    let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('games')")
+        .fetch_all(pool)
+        .await
+        .expect("read games columns");
+    if !cols.iter().any(|c| c == "video_producer_buffer_caps") {
+        tracing::warn!("library: games table predates per-app engine config, rebuilding from wolf");
+        sqlx::query("DROP TABLE games")
+            .execute(pool)
+            .await
+            .expect("drop stale games table");
+    }
+}
+
+pub async fn run_schema(pool: &SqlitePool) {
+    schema(pool).await
+}
+
 async fn schema(pool: &SqlitePool) {
+    migrate_games(pool).await;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY,

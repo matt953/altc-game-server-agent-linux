@@ -113,7 +113,10 @@ async fn adopts_wolfs_apps_then_pushes_them_back_identically() {
     assert_eq!(one["runner"]["image"], "ghcr.io/matt953/wolf-runner:v7");
     // Wolf's reflector dropped this until 2026-08-24; an app without it builds
     // a malformed video pipeline and never launches.
-    assert_eq!(one["video_producer_buffer_caps"], "video/x-raw, format=NV12");
+    assert_eq!(
+        one["video_producer_buffer_caps"],
+        "video/x-raw, format=NV12"
+    );
     assert_eq!(one["runner"]["mounts"][0], "/games/bg3:/games/bg3:rw");
 }
 
@@ -237,4 +240,38 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
     .unwrap();
     assert!(library::push(&pool, &wolf).await.is_err());
     assert!(apps.lock().unwrap().is_empty(), "nothing may be sent");
+}
+
+// A games table from before per-app engine config is dropped and rebuilt on
+// the next connect, rather than left unreadable.
+#[tokio::test]
+async fn a_stale_games_table_is_rebuilt_not_left_broken() {
+    let pool = db::init_memory().await;
+    sqlx::query("DROP TABLE games")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TABLE games (id TEXT PRIMARY KEY, title TEXT NOT NULL, support_hdr BOOLEAN NOT NULL
+         DEFAULT 0, icon_png_path TEXT NOT NULL DEFAULT '', render_node TEXT NOT NULL DEFAULT '',
+         runner_json TEXT NOT NULL)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO games (id,title,runner_json) VALUES ('1','Old','{}')")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    db::run_schema(&pool).await;
+
+    // Dropped, so the next import repopulates it in the current shape.
+    assert_eq!(db::games::count(&pool).await.unwrap(), 0);
+    let (wolf, _apps) = start("stale", vec![seed_app("1", "One")]).await;
+    assert_eq!(library::import_if_empty(&pool, &wolf).await.unwrap(), 1);
+    assert_eq!(
+        db::games::list(&pool).await.unwrap()[0].video_producer_buffer_caps,
+        "video/x-raw, format=NV12"
+    );
 }
