@@ -29,6 +29,36 @@ fn absolute(url: &str) -> String {
     }
 }
 
+/// GOG descriptions are store HTML: `<p class="module">`, `<b>`, even
+/// `<img src=...>`. Storing that raw would hand third-party markup straight to
+/// whatever renders it — markup in a text field at best, an injection vector
+/// in the web UI at worst. Reduced to plain text here, once, rather than
+/// asking every client to sanitise it.
+pub fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            // A block break should read as a break, not as glued-together words.
+            '>' => {
+                in_tag = false;
+                out.push(' ');
+            }
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    let decoded = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn parse_gog(body: &str) -> Result<Metadata, ApiError> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| ApiError::internal(format!("gog json: {e}")))?;
@@ -45,10 +75,18 @@ pub fn parse_gog(body: &str) -> Result<Metadata, ApiError> {
         title: s("title"),
         slug: s("slug"),
         release_date: s("release_date"),
-        description: v["description"]["lead"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
+        // `lead` when GOG has one, `full` otherwise. GOG sometimes puts a
+        // store banner in `lead` (BG3's is "Cross-platform multiplayer with
+        // Steam is supported"), but that is a data-quality quirk on their
+        // side and no length heuristic distinguishes it from a real blurb.
+        description: {
+            let lead = html_to_text(v["description"]["lead"].as_str().unwrap_or_default());
+            if lead.is_empty() {
+                html_to_text(v["description"]["full"].as_str().unwrap_or_default())
+            } else {
+                lead
+            }
+        },
         art_urls,
     })
 }
@@ -249,5 +287,46 @@ mod appid_tests {
     #[test]
     fn a_game_with_no_protondb_entry_is_not_an_error() {
         assert!(parse_protondb("{}").is_none());
+    }
+}
+
+#[cfg(test)]
+mod html_tests {
+    use super::*;
+
+    #[test]
+    fn strips_the_markup_gog_actually_sends() {
+        let html = r#"<p class="module">Cross-platform <b>multiplayer</b> is supported.</p>"#;
+        assert_eq!(
+            html_to_text(html),
+            "Cross-platform multiplayer is supported."
+        );
+    }
+
+    #[test]
+    fn an_image_tag_leaves_nothing_behind() {
+        // GOG embeds these; a client must never be handed a live img tag.
+        let html = r#"<b>Update!</b><br><img src="https://x/y.jpg" onerror="alert(1)">Text"#;
+        let text = html_to_text(html);
+        assert!(!text.contains('<'), "got: {text}");
+        assert!(!text.contains("onerror"), "got: {text}");
+        assert!(text.contains("Update!") && text.contains("Text"));
+    }
+
+    #[test]
+    fn entities_are_decoded_and_whitespace_collapsed() {
+        assert_eq!(html_to_text("A &amp; B\n\n  C"), "A & B C");
+    }
+
+    #[test]
+    fn an_empty_lead_falls_back_to_the_full_description() {
+        let body = r#"{"description":{"lead":"","full":"<p>The actual blurb.</p>"}}"#;
+        assert_eq!(parse_gog(body).unwrap().description, "The actual blurb.");
+    }
+
+    #[test]
+    fn a_short_lead_is_still_the_lead() {
+        let body = r#"{"description":{"lead":"Wolfenstein returns.","full":"<p>Long.</p>"}}"#;
+        assert_eq!(parse_gog(body).unwrap().description, "Wolfenstein returns.");
     }
 }
