@@ -85,6 +85,35 @@ pub fn steam_art_urls(appid: &str) -> Vec<String> {
     .collect()
 }
 
+/// umu needs a Steam appid for protonfixes, so every Proton game already
+/// carries one as `GAMEID=umu-<appid>`. That is a free, exact Steam id: no
+/// title matching, no key. It unlocks Steam's 600x900 box art (larger than
+/// GOG's 342x482) and ProtonDB, which is keyed by appid and nothing else.
+pub fn steam_appid_from_runner(runner_json: &str) -> Option<String> {
+    let runner: serde_json::Value = serde_json::from_str(runner_json).ok()?;
+    let env = runner["env"].as_array()?;
+    for e in env {
+        let val = e.as_str()?;
+        if let Some(id) = val.strip_prefix("GAMEID=umu-") {
+            if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn protondb_url(appid: &str) -> String {
+    format!("https://www.protondb.com/api/v1/reports/summaries/{appid}.json")
+}
+
+/// The tier is the whole point of the badge; the rest of the payload is noise
+/// for a library tile.
+pub fn parse_protondb(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v["tier"].as_str().map(String::from)
+}
+
 pub fn art_urls_for(identity: &Identity, meta: &Metadata) -> Vec<String> {
     match identity.store {
         "steam" => steam_art_urls(&identity.store_id),
@@ -181,5 +210,44 @@ mod tests {
         assert_eq!(extension_for("image/png"), "png");
         assert_eq!(extension_for("image/jpeg"), "jpg");
         assert_eq!(extension_for("image/webp"), "webp");
+    }
+}
+
+#[cfg(test)]
+mod appid_tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_steam_appid_umu_already_carries() {
+        // Exactly as it appears on the NAS today.
+        let runner =
+            r#"{"type":"docker","env":["LANG=en_US.UTF-8","GAMEID=umu-201810","STORE=gog"]}"#;
+        assert_eq!(steam_appid_from_runner(runner).as_deref(), Some("201810"));
+    }
+
+    #[test]
+    fn a_game_without_a_gameid_has_no_appid() {
+        let runner = r#"{"type":"docker","env":["RUN_EXE=/games/x/x.exe"]}"#;
+        assert!(steam_appid_from_runner(runner).is_none());
+    }
+
+    #[test]
+    fn a_non_numeric_gameid_is_not_an_appid() {
+        // umu also accepts named ids like GAMEID=umu-default.
+        let runner = r#"{"env":["GAMEID=umu-default"]}"#;
+        assert!(steam_appid_from_runner(runner).is_none());
+    }
+
+    #[test]
+    fn reads_the_protondb_tier_and_ignores_the_rest() {
+        let body = r#"{"bestReportedTier":"platinum","confidence":"strong","score":0.89,
+                       "tier":"gold","total":257,"trendingTier":"platinum"}"#;
+        // The current tier, not the best anyone ever reported.
+        assert_eq!(parse_protondb(body).as_deref(), Some("gold"));
+    }
+
+    #[test]
+    fn a_game_with_no_protondb_entry_is_not_an_error() {
+        assert!(parse_protondb("{}").is_none());
     }
 }

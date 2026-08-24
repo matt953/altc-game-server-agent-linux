@@ -28,6 +28,8 @@ pub struct Game {
     pub slug: String,
     pub release_date: String,
     pub description: String,
+    /// ProtonDB tier: platinum/gold/silver/bronze/borked. Empty when unknown.
+    pub protondb_tier: String,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Game>, ApiError> {
@@ -49,8 +51,8 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
         "INSERT INTO games (id, title, support_hdr, icon_png_path, render_node, runner_json,
                             video_producer_buffer_caps, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
                             opus_gst_pipeline, start_audio_server, start_virtual_compositor,
-                            store, store_id, slug, release_date, description)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            store, store_id, slug, release_date, description, protondb_tier)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             support_hdr = excluded.support_hdr,
@@ -68,7 +70,8 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
             store_id = excluded.store_id,
             slug = excluded.slug,
             release_date = excluded.release_date,
-            description = excluded.description",
+            description = excluded.description,
+            protondb_tier = excluded.protondb_tier",
     )
     .bind(&g.id)
     .bind(&g.title)
@@ -88,6 +91,7 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     .bind(&g.slug)
     .bind(&g.release_date)
     .bind(&g.description)
+    .bind(&g.protondb_tier)
     .execute(pool)
     .await?;
     Ok(())

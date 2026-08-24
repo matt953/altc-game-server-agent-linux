@@ -240,6 +240,7 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
             slug: String::new(),
             release_date: String::new(),
             description: String::new(),
+            protondb_tier: String::new(),
         },
     )
     .await
@@ -283,6 +284,7 @@ async fn backfill_completes_old_rows_and_keeps_overrides() {
                 slug: String::new(),
                 release_date: String::new(),
                 description: String::new(),
+                protondb_tier: String::new(),
             },
         )
         .await
@@ -338,6 +340,7 @@ async fn backfill_keeps_a_game_wolf_does_not_know() {
             slug: String::new(),
             release_date: String::new(),
             description: String::new(),
+            protondb_tier: String::new(),
         },
     )
     .await
@@ -432,6 +435,7 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
                 slug: String::new(),
                 release_date: String::new(),
                 description: String::new(),
+                protondb_tier: String::new(),
             },
         )
         .await

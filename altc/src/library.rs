@@ -54,6 +54,7 @@ fn game_from(app: &Value) -> Game {
         slug: String::new(),
         release_date: String::new(),
         description: String::new(),
+        protondb_tier: String::new(),
     }
 }
 
@@ -442,6 +443,7 @@ pub async fn create(
         slug: String::new(),
         release_date: String::new(),
         description: String::new(),
+        protondb_tier: String::new(),
     };
     games::upsert(pool, &game).await?;
     push(pool, wolf).await?;
@@ -498,7 +500,25 @@ pub async fn refresh_metadata(
     let identity = crate::identity::detect(&folder)
         .ok_or_else(|| ApiError::bad_request("no store manifest in the install folder"))?;
 
-    let meta = crate::metadata::fetch::lookup(source, &identity)?;
+    let mut meta = crate::metadata::fetch::lookup(source, &identity)?;
+
+    // Every Proton game already carries a Steam appid for protonfixes. It is
+    // an exact id obtained without a key or a title match, and Steam's box art
+    // is 600x900 against GOG's 342x482, so it goes first when present.
+    if let Some(appid) = crate::metadata::steam_appid_from_runner(&game.runner_json) {
+        let mut urls = crate::metadata::steam_art_urls(&appid);
+        urls.extend(meta.art_urls.clone());
+        meta.art_urls = urls;
+
+        match source
+            .get_text(&crate::metadata::protondb_url(&appid))
+            .ok()
+            .and_then(|b| crate::metadata::parse_protondb(&b))
+        {
+            Some(tier) => game.protondb_tier = tier,
+            None => tracing::debug!("metadata: no protondb entry for appid {appid}"),
+        }
+    }
     game.store = identity.store.to_string();
     game.store_id = identity.store_id.clone();
     if !meta.title.is_empty() {

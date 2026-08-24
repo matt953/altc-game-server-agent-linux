@@ -90,6 +90,12 @@ const MIGRATIONS: &[(&str, &str)] = &[
          ALTER TABLE games ADD COLUMN release_date TEXT NOT NULL DEFAULT '';
          ALTER TABLE games ADD COLUMN description TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // ProtonDB's compatibility tier. Keyed by Steam appid, which every
+        // Proton game already carries as GAMEID=umu-<appid> for protonfixes.
+        "0005_protondb",
+        "ALTER TABLE games ADD COLUMN protondb_tier TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {

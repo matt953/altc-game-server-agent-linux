@@ -13,7 +13,38 @@ pub struct ClientApp {
     pub id: String,
     pub title: String,
     pub support_hdr: bool,
+    /// Always something a client can actually fetch. Cached art is stored as a
+    /// path inside the wolf container, which is meaningless to a client, so it
+    /// is exposed as this API's own art endpoint instead.
     pub icon: Option<String>,
+    // Added by the metadata pipeline; absent until a game has been identified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_date: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<String>,
+    /// platinum/gold/silver/bronze/borked — what a client shows as a badge so
+    /// a user knows whether a game actually works before launching it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub protondb_tier: Option<String>,
+}
+
+/// A stored icon is either a URL the store gave us or a file we cached. Only
+/// the first is any use to a client verbatim.
+fn client_icon(g: &crate::db::games::Game) -> Option<String> {
+    let stored = g.icon_png_path.trim();
+    if stored.is_empty() {
+        return None;
+    }
+    if stored.starts_with("http://") || stored.starts_with("https://") {
+        return Some(stored.to_string());
+    }
+    Some(format!("/api/v1/apps/{}/art", g.id))
+}
+
+fn blank_to_none(s: &str) -> Option<String> {
+    Some(s.to_string()).filter(|v| !v.is_empty())
 }
 
 // Served from our own library, not proxied from Wolf: SQLite is the source of
@@ -28,10 +59,14 @@ pub async fn list(State(s): State<AppState>, user: User) -> Result<Json<Vec<Clie
             None => true,
         })
         .map(|g| ClientApp {
+            icon: client_icon(&g),
+            description: blank_to_none(&g.description),
+            release_date: blank_to_none(&g.release_date),
+            store: blank_to_none(&g.store),
+            protondb_tier: blank_to_none(&g.protondb_tier),
             id: g.id,
             title: g.title,
             support_hdr: g.support_hdr,
-            icon: Some(g.icon_png_path).filter(|p| !p.is_empty()),
         })
         .collect();
     Ok(Json(apps))
@@ -98,10 +133,10 @@ pub struct AdminApp {
 impl From<crate::db::games::Game> for AdminApp {
     fn from(g: crate::db::games::Game) -> Self {
         Self {
+            icon: client_icon(&g),
             id: g.id,
             title: g.title,
             support_hdr: g.support_hdr,
-            icon: Some(g.icon_png_path).filter(|p| !p.is_empty()),
         }
     }
 }
@@ -113,7 +148,28 @@ pub async fn create(
 ) -> Result<(axum::http::StatusCode, Json<AdminApp>), ApiError> {
     let game = crate::library::create(&s.pool, &s.wolf, &s.library, new).await?;
     tracing::info!("app '{}' added by '{}'", game.title, actor.name);
-    Ok((axum::http::StatusCode::CREATED, Json(game.into())))
+
+    // Identify and decorate it immediately: "add a game" should mean the tile
+    // is populated, not that someone must remember a second call. A metadata
+    // failure must never undo an otherwise valid add, so it only warns.
+    let decorated = match crate::metadata::fetch::HttpSource::new() {
+        Ok(source) => {
+            match crate::library::refresh_metadata(&s.pool, &s.wolf, &source, &s.art_dir, &game.id)
+                .await
+            {
+                Ok(g) => g,
+                Err(e) => {
+                    tracing::warn!("metadata for '{}' unavailable: {}", game.title, e.1);
+                    game
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("no http client for metadata: {}", e.1);
+            game
+        }
+    };
+    Ok((axum::http::StatusCode::CREATED, Json(decorated.into())))
 }
 
 #[derive(serde::Deserialize)]
@@ -187,6 +243,7 @@ pub async fn refresh(
         "slug": game.slug,
         "release_date": game.release_date,
         "description": game.description,
+        "protondb_tier": game.protondb_tier,
         "has_art": !game.icon_png_path.is_empty(),
     })))
 }
