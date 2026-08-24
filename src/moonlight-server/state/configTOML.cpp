@@ -120,6 +120,14 @@ std::optional<GstEncoder> get_encoder(std::string_view tech,
  * ID is used by Moonlight to uniquely identify the app.
  * We have to change it if we change something that will be displayed
  */
+/**
+ * Derives an id from mutable fields, so it CHANGES when a title or icon does.
+ * That is only tolerable because this runs in one place: seeding apps from
+ * config.toml, which the altc agent imports once and then owns. Identity for
+ * anything the agent creates comes from games::allocate_id, which is random
+ * and survives an edit. Do not reach for this anywhere else -- a moving id
+ * orphans app_shares and invalidates every client's cached library.
+ */
 std::string generate_app_id(const BaseApp &app) {
   auto hash = utils::hash(app.icon_png_path.value_or("") + app.title);
   // Value must be truncated to signed 32-bit range due to client limitations

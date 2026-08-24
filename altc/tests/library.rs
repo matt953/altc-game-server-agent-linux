@@ -335,3 +335,85 @@ async fn backfill_keeps_a_game_wolf_does_not_know() {
     assert_eq!(rows.len(), 1, "the row must not be deleted");
     assert_eq!(rows[0].title, "Added by hand");
 }
+
+// M2: identity must not move when a title or its art does. Wolf derives an id
+// from hash(icon_png_path + title) when seeding from config, which is why
+// Wolfenstein's id changed twice on 2026-08-24 when it was retitled.
+#[tokio::test]
+async fn renaming_a_game_keeps_its_id_and_its_shares() {
+    let pool = db::init_memory().await;
+    let (wolf, apps) = start(
+        "rename",
+        vec![seed_app("465409800", "Wolfenstein - The New Order")],
+    )
+    .await;
+    library::import_if_empty(&pool, &wolf).await.unwrap();
+
+    // Someone is granted access to it before the rename.
+    let uid = db::users::insert(&pool, "dave", "member").await.unwrap();
+    db::shares::set_for_app(&pool, "465409800", &[uid])
+        .await
+        .unwrap();
+
+    db::games::rename(
+        &pool,
+        "465409800",
+        "Wolfenstein: The New Order",
+        "https://example.com/new-art.png",
+    )
+    .await
+    .unwrap();
+
+    apps.lock().unwrap().clear();
+    library::push(&pool, &wolf).await.unwrap();
+
+    let pushed = apps.lock().unwrap().clone();
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(pushed[0]["id"], "465409800", "id must survive a retitle");
+    assert_eq!(pushed[0]["title"], "Wolfenstein: The New Order");
+    assert_eq!(
+        pushed[0]["icon_png_path"],
+        "https://example.com/new-art.png"
+    );
+    // Shares are keyed by id, so they must still point at the same game.
+    assert_eq!(
+        db::shares::for_app(&pool, "465409800").await.unwrap(),
+        vec![uid]
+    );
+}
+
+#[tokio::test]
+async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
+    let pool = db::init_memory().await;
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..32 {
+        let id = db::games::allocate_id(&pool).await.unwrap();
+        let n: i64 = id.parse().expect("id must be numeric");
+        assert!(
+            n > 0 && n <= i32::MAX as i64,
+            "id {n} must fit signed 32-bit"
+        );
+        assert!(seen.insert(id.clone()), "allocate_id returned a duplicate");
+        // Occupy it, so the next call has to avoid it.
+        db::games::upsert(
+            &pool,
+            &db::games::Game {
+                id,
+                title: "x".into(),
+                support_hdr: false,
+                icon_png_path: String::new(),
+                render_node: String::new(),
+                runner_json: "{}".into(),
+                video_producer_buffer_caps: "caps".into(),
+                h264_gst_pipeline: "h".into(),
+                hevc_gst_pipeline: "h".into(),
+                av1_gst_pipeline: "a".into(),
+                opus_gst_pipeline: "o".into(),
+                start_audio_server: true,
+                start_virtual_compositor: true,
+            },
+        )
+        .await
+        .unwrap();
+    }
+}

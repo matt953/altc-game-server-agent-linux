@@ -119,3 +119,43 @@ pub async fn set_engine_defaults(pool: &SqlitePool, d: &EngineDefaults) -> Resul
     .await?;
     Ok(())
 }
+
+/// A fresh app id for a game we create ourselves.
+///
+/// Deliberately random, never derived from the title or icon: Wolf derives
+/// `hash(icon_png_path + title)` when seeding from config, which means a
+/// rename silently changes an app's identity, orphaning its shares and
+/// invalidating every client's cached library. Ours must survive an edit.
+///
+/// Constrained to a positive signed 32-bit value because Moonlight clients
+/// cannot carry anything wider.
+pub async fn allocate_id(pool: &SqlitePool) -> Result<String, ApiError> {
+    for _ in 0..64 {
+        let raw: u32 = rand::random();
+        let candidate = (1 + raw % (i32::MAX as u32 - 1)).to_string();
+        let taken: Option<String> = sqlx::query_scalar("SELECT id FROM games WHERE id = ?")
+            .bind(&candidate)
+            .fetch_optional(pool)
+            .await?;
+        if taken.is_none() {
+            return Ok(candidate);
+        }
+    }
+    Err(ApiError::internal("could not allocate a free app id"))
+}
+
+/// Change only what a user can edit. The id is deliberately not a parameter:
+/// identity must not move when a title or its art does.
+pub async fn rename(pool: &SqlitePool, id: &str, title: &str, icon: &str) -> Result<(), ApiError> {
+    let changed = sqlx::query("UPDATE games SET title = ?, icon_png_path = ? WHERE id = ?")
+        .bind(title)
+        .bind(icon)
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(ApiError::not_found("no such game"));
+    }
+    Ok(())
+}
