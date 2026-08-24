@@ -78,6 +78,18 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "ALTER TABLE engine_defaults ADD COLUMN render_node TEXT NOT NULL DEFAULT '';
          ALTER TABLE engine_defaults ADD COLUMN runner_base_create_json TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // What the metadata pipeline discovers. Identity comes from the
+        // install folder (goggame-<id>.info / appmanifest_<appid>.acf), so a
+        // game knows which store it came from and can be re-looked-up later
+        // without asking the admin anything.
+        "0004_metadata",
+        "ALTER TABLE games ADD COLUMN store TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN store_id TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN slug TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN release_date TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN description TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {

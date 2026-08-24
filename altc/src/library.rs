@@ -47,6 +47,13 @@ fn game_from(app: &Value) -> Game {
         opus_gst_pipeline: s("opus_gst_pipeline"),
         start_audio_server: app["start_audio_server"].as_bool().unwrap_or(true),
         start_virtual_compositor: app["start_virtual_compositor"].as_bool().unwrap_or(true),
+        // An imported app carries no store identity: it is discovered from the
+        // install folder on refresh, never guessed from the title.
+        store: String::new(),
+        store_id: String::new(),
+        slug: String::new(),
+        release_date: String::new(),
+        description: String::new(),
     }
 }
 
@@ -430,6 +437,11 @@ pub async fn create(
         opus_gst_pipeline: d.opus_gst_pipeline.clone(),
         start_audio_server: d.start_audio_server,
         start_virtual_compositor: d.start_virtual_compositor,
+        store: String::new(),
+        store_id: String::new(),
+        slug: String::new(),
+        release_date: String::new(),
+        description: String::new(),
     };
     games::upsert(pool, &game).await?;
     push(pool, wolf).await?;
@@ -442,4 +454,74 @@ pub async fn remove(pool: &SqlitePool, wolf: &WolfClient, id: &str) -> Result<()
     push(pool, wolf).await?;
     tracing::info!("library: removed game {id}");
     Ok(())
+}
+
+/// The folder a game is installed in, taken from its first mount. Everything
+/// the metadata pipeline needs starts here: the store leaves its own manifest
+/// in this folder, so the game identifies itself.
+pub fn install_folder(g: &Game) -> Option<std::path::PathBuf> {
+    let runner: Value = serde_json::from_str(&g.runner_json).ok()?;
+    let mounts = runner["mounts"].as_array()?;
+    for m in mounts {
+        let spec = m.as_str()?;
+        let source = spec.split(':').next()?;
+        let path = std::path::PathBuf::from(source);
+        if crate::identity::detect(&path).is_some() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Identify a game from its install folder, fetch its metadata and cache its
+/// art. Nothing here is supplied by an admin — which is what makes a populated
+/// grid evidence that the pipeline ran, rather than evidence someone pasted a
+/// URL in.
+pub async fn refresh_metadata(
+    pool: &SqlitePool,
+    wolf: &WolfClient,
+    source: &dyn crate::metadata::fetch::Source,
+    art_dir: &std::path::Path,
+    id: &str,
+) -> Result<Game, ApiError> {
+    let mut game = games::list(pool)
+        .await?
+        .into_iter()
+        .find(|g| g.id == id)
+        .ok_or_else(|| ApiError::not_found("no such game"))?;
+
+    let Some(folder) = install_folder(&game) else {
+        return Err(ApiError::bad_request(
+            "could not identify this game: no store manifest in any of its mounts",
+        ));
+    };
+    let identity = crate::identity::detect(&folder)
+        .ok_or_else(|| ApiError::bad_request("no store manifest in the install folder"))?;
+
+    let meta = crate::metadata::fetch::lookup(source, &identity)?;
+    game.store = identity.store.to_string();
+    game.store_id = identity.store_id.clone();
+    if !meta.title.is_empty() {
+        // The store's title is canonical, punctuation and all.
+        game.title = meta.title.clone();
+    }
+    game.slug = meta.slug.clone();
+    game.release_date = meta.release_date.clone();
+    game.description = meta.description.clone();
+
+    // Art failing must not lose the metadata we already have.
+    match crate::metadata::fetch::cache_art(source, art_dir, &game.id, &identity, &meta) {
+        Ok(path) => game.icon_png_path = path.to_string_lossy().to_string(),
+        Err(e) => tracing::warn!("metadata: no art for '{}': {}", game.title, e.1),
+    }
+
+    games::upsert(pool, &game).await?;
+    push(pool, wolf).await?;
+    tracing::info!(
+        "metadata: '{}' identified as {} {}",
+        game.title,
+        game.store,
+        game.store_id
+    );
+    Ok(game)
 }

@@ -57,6 +57,7 @@ async fn setup(test: &str) -> (Router, String) {
             wolf,
             events: altc_api::events::EventHub::new(),
             library: altc_api::storage::Library::default(),
+            art_dir: std::env::temp_dir().join("altc-test-art"),
         }),
         token,
     )

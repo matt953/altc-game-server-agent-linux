@@ -235,6 +235,11 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
             opus_gst_pipeline: String::new(),
             start_audio_server: true,
             start_virtual_compositor: true,
+            store: String::new(),
+            store_id: String::new(),
+            slug: String::new(),
+            release_date: String::new(),
+            description: String::new(),
         },
     )
     .await
@@ -273,6 +278,11 @@ async fn backfill_completes_old_rows_and_keeps_overrides() {
                 opus_gst_pipeline: String::new(),
                 start_audio_server: true,
                 start_virtual_compositor: true,
+                store: String::new(),
+                store_id: String::new(),
+                slug: String::new(),
+                release_date: String::new(),
+                description: String::new(),
             },
         )
         .await
@@ -323,6 +333,11 @@ async fn backfill_keeps_a_game_wolf_does_not_know() {
             opus_gst_pipeline: String::new(),
             start_audio_server: true,
             start_virtual_compositor: true,
+            store: String::new(),
+            store_id: String::new(),
+            slug: String::new(),
+            release_date: String::new(),
+            description: String::new(),
         },
     )
     .await
@@ -412,6 +427,11 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
                 opus_gst_pipeline: "o".into(),
                 start_audio_server: true,
                 start_virtual_compositor: true,
+                store: String::new(),
+                store_id: String::new(),
+                slug: String::new(),
+                release_date: String::new(),
+                description: String::new(),
             },
         )
         .await

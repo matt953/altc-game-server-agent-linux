@@ -25,6 +25,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/storage/browse", get(storage::browse))
         .route("/api/v1/apps", get(apps::list).post(apps::create))
         .route(
+            "/api/v1/apps/{app_id}/refresh",
+            axum::routing::post(apps::refresh),
+        )
+        .route("/api/v1/apps/{app_id}/art", get(apps::art))
+        .route(
             "/api/v1/apps/{app_id}",
             axum::routing::patch(apps::update).delete(apps::delete),
         )

@@ -161,3 +161,64 @@ pub async fn delete(
     tracing::info!("app {app_id} deleted by '{}'", actor.name);
     Ok(axum::http::StatusCode::NO_CONTENT)
 }
+
+/// Identify a game from its install folder and fetch its metadata and art.
+/// Nothing is accepted from the caller: the point is that a populated grid
+/// proves the pipeline ran.
+pub async fn refresh(
+    State(s): State<AppState>,
+    AdminUser(actor): AdminUser,
+    Path(app_id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let source = crate::metadata::fetch::HttpSource::new()?;
+    let art_dir = s.art_dir.clone();
+    let (pool, wolf) = (s.pool.clone(), s.wolf.clone());
+    let game = crate::library::refresh_metadata(&pool, &wolf, &source, &art_dir, &app_id).await?;
+    tracing::info!(
+        "metadata for '{}' refreshed by '{}'",
+        game.title,
+        actor.name
+    );
+    Ok(Json(json!({
+        "id": game.id,
+        "title": game.title,
+        "store": game.store,
+        "store_id": game.store_id,
+        "slug": game.slug,
+        "release_date": game.release_date,
+        "description": game.description,
+        "has_art": !game.icon_png_path.is_empty(),
+    })))
+}
+
+/// Serves the cached art. Clients render tiles from this; Wolf reads the file
+/// directly for Moonlight's appasset, so stock clients get covers too.
+pub async fn art(
+    State(s): State<AppState>,
+    _user: User,
+    Path(app_id): Path<String>,
+) -> Result<axum::response::Response, ApiError> {
+    let game = games::list(&s.pool)
+        .await?
+        .into_iter()
+        .find(|g| g.id == app_id)
+        .ok_or_else(|| ApiError::not_found("no such app"))?;
+    if game.icon_png_path.is_empty() {
+        return Err(ApiError::not_found("no art for this game"));
+    }
+    let bytes = tokio::fs::read(&game.icon_png_path)
+        .await
+        .map_err(|_| ApiError::not_found("art file is missing"))?;
+    let content_type = match std::path::Path::new(&game.icon_png_path)
+        .extension()
+        .and_then(|e| e.to_str())
+    {
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        _ => "image/jpeg",
+    };
+    Ok(axum::response::IntoResponse::into_response((
+        [(axum::http::header::CONTENT_TYPE, content_type)],
+        bytes,
+    )))
+}

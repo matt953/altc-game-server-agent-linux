@@ -41,11 +41,14 @@ async fn main() {
     spawn_bridge(wolf.clone(), events.clone(), pool.clone());
 
     let library = altc_api::storage::Library::from_env();
+    let art_dir = state_dir.join("art");
+    fs::create_dir_all(&art_dir).expect("create art cache dir");
     let app = routes::router(AppState {
         pool,
         wolf,
         events,
         library,
+        art_dir,
     });
     let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
         .await

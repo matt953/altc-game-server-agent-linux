@@ -22,6 +22,12 @@ pub struct Game {
     pub opus_gst_pipeline: String,
     pub start_audio_server: bool,
     pub start_virtual_compositor: bool,
+    /// Discovered, never typed: which store the install identifies itself as.
+    pub store: String,
+    pub store_id: String,
+    pub slug: String,
+    pub release_date: String,
+    pub description: String,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Game>, ApiError> {
@@ -42,8 +48,9 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     sqlx::query(
         "INSERT INTO games (id, title, support_hdr, icon_png_path, render_node, runner_json,
                             video_producer_buffer_caps, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
-                            opus_gst_pipeline, start_audio_server, start_virtual_compositor)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            opus_gst_pipeline, start_audio_server, start_virtual_compositor,
+                            store, store_id, slug, release_date, description)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             support_hdr = excluded.support_hdr,
@@ -56,7 +63,12 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
             av1_gst_pipeline = excluded.av1_gst_pipeline,
             opus_gst_pipeline = excluded.opus_gst_pipeline,
             start_audio_server = excluded.start_audio_server,
-            start_virtual_compositor = excluded.start_virtual_compositor",
+            start_virtual_compositor = excluded.start_virtual_compositor,
+            store = excluded.store,
+            store_id = excluded.store_id,
+            slug = excluded.slug,
+            release_date = excluded.release_date,
+            description = excluded.description",
     )
     .bind(&g.id)
     .bind(&g.title)
@@ -71,6 +83,11 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     .bind(&g.opus_gst_pipeline)
     .bind(g.start_audio_server)
     .bind(g.start_virtual_compositor)
+    .bind(&g.store)
+    .bind(&g.store_id)
+    .bind(&g.slug)
+    .bind(&g.release_date)
+    .bind(&g.description)
     .execute(pool)
     .await?;
     Ok(())
