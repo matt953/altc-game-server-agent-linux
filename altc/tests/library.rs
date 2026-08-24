@@ -725,3 +725,66 @@ async fn an_omitted_appid_leaves_the_field_open_for_discovery() {
     assert!(game.steam_appid.is_empty());
     assert!(game.appid_source.is_empty());
 }
+
+// Field-found 2026-08-24: GOG's fields were assigned AFTER Steam's, silently
+// clobbering the release date. Wolfenstein showed GOG's 2020 re-release
+// instead of its 2014 launch, and BG3 showed early access instead of release.
+#[tokio::test]
+async fn steam_refines_gogs_release_date_rather_than_being_overwritten() {
+    let pool = db::init_memory().await;
+    let (wolf, _apps) = start("m4-dateorder", vec![seed_app("1", "Doom")]).await;
+    library::import_if_empty(&pool, &wolf).await.unwrap();
+
+    // A game whose install folder is a real GOG install, with a GAMEID so the
+    // appid is exact and no title lookup is involved.
+    let root = std::env::temp_dir().join(format!("altc-order-{}", std::process::id()));
+    let game_dir = root.join("doom");
+    std::fs::create_dir_all(&game_dir).unwrap();
+    std::fs::write(
+        game_dir.join("goggame-999.info"),
+        r#"{"gameId":"999","rootGameId":"999","name":"Doom"}"#,
+    )
+    .unwrap();
+
+    let mut g = db::games::list(&pool).await.unwrap()[0].clone();
+    g.runner_json = json!({
+        "type": "docker",
+        "mounts": [format!("{}:/games/doom:rw", game_dir.display())],
+        "env": ["GAMEID=umu-4242"]
+    })
+    .to_string();
+    db::games::upsert(&pool, &g).await.unwrap();
+
+    let src = OrderedSource;
+    library::refresh_metadata(&pool, &wolf, &src, &root, &g.id)
+        .await
+        .unwrap();
+
+    let after = db::games::list(&pool).await.unwrap()[0].clone();
+    // Steam's date must win; GOG's must not be reapplied on top of it.
+    assert_eq!(after.release_date, "2014-05-19", "steam date must survive");
+    assert_eq!(after.tagline, "The real tagline.");
+    // GOG still supplies what Steam is not asked for.
+    assert_eq!(after.slug, "doom-slug");
+}
+
+/// GOG says 2020, Steam says 2014. Whichever is applied last wins, which is
+/// exactly the bug under test.
+struct OrderedSource;
+impl altc_api::metadata::fetch::Source for OrderedSource {
+    fn get_text(&self, url: &str) -> Result<String, altc_api::error::ApiError> {
+        if url.contains("/v2/games/") {
+            return Ok(r#"{"_links":{}}"#.to_string());
+        }
+        if url.contains("api.gog.com/products/") {
+            return Ok(r#"{"title":"Doom","slug":"doom-slug","release_date":"2020-01-01T00:00:00+0000","images":{},"description":{"lead":"gog text"}}"#.to_string());
+        }
+        if url.contains("appdetails") {
+            return Ok(r#"{"4242":{"success":true,"data":{"short_description":"The real tagline.","release_date":{"date":"19 May, 2014"},"developers":["id"],"genres":[{"description":"Action"}]}}}"#.to_string());
+        }
+        Ok("{}".to_string())
+    }
+    fn get_bytes(&self, _url: &str) -> Result<(Vec<u8>, String), altc_api::error::ApiError> {
+        Err(altc_api::error::ApiError::not_found("no art in this test"))
+    }
+}

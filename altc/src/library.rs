@@ -530,6 +530,20 @@ pub async fn refresh_metadata(
 
     let mut meta = crate::metadata::fetch::lookup(source, &identity)?;
 
+    // The store the game is installed from goes first; Steam then refines the
+    // fields it knows better. Order matters: assigning GOG's values afterwards
+    // silently clobbered Steam's release date (found in the field 2026-08-24 —
+    // Wolfenstein showed GOG's 2020 re-release instead of its 2014 launch).
+    game.store = identity.store.to_string();
+    game.store_id = identity.store_id.clone();
+    if !meta.title.is_empty() {
+        // The store's title is canonical, punctuation and all.
+        game.title = meta.title.clone();
+    }
+    game.slug = meta.slug.clone();
+    game.release_date = meta.release_date.clone();
+    game.description = meta.description.clone();
+
     // Precedence: what an admin set, then the appid umu already needs, then a
     // title lookup. The first two are exact; the third is a guess, so it is
     // only accepted on an exact title match and is recorded as a guess.
@@ -585,16 +599,6 @@ pub async fn refresh_metadata(
             None => tracing::debug!("metadata: no protondb entry for appid {appid}"),
         }
     }
-    game.store = identity.store.to_string();
-    game.store_id = identity.store_id.clone();
-    if !meta.title.is_empty() {
-        // The store's title is canonical, punctuation and all.
-        game.title = meta.title.clone();
-    }
-    game.slug = meta.slug.clone();
-    game.release_date = meta.release_date.clone();
-    game.description = meta.description.clone();
-
     // Art failing must not lose the metadata we already have.
     match crate::metadata::fetch::cache_art(source, art_dir, &game.id, &identity, &meta) {
         Ok(path) => game.icon_png_path = path.to_string_lossy().to_string(),
