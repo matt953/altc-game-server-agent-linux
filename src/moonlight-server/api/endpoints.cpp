@@ -105,6 +105,21 @@ void UnixSocketServer::endpoint_AddApp(const HTTPRequest &req, std::shared_ptr<U
   auto app = rfl::json::read<rfl::Reflector<events::App>::ReflType>(req.body);
   if (app) {
     auto profiles = state_->app_state->config->profiles->load().get();
+    // An app with no producer caps builds a malformed video pipeline and can
+    // never launch. Callers that do not send it inherit an existing app's,
+    // which is what the config loader would have given them.
+    if (!app.value().video_producer_buffer_caps || app.value().video_producer_buffer_caps->empty()) {
+      for (const auto &profile : profiles) {
+        if (profile->id != events::MOONLIGHT_PROFILE_ID) {
+          continue;
+        }
+        auto existing = profile->apps->load().get();
+        if (!existing.empty()) {
+          app.value().video_producer_buffer_caps = existing[0]->video_producer_buffer_caps;
+          logs::log(logs::debug, "[API] App '{}' sent no video_producer_buffer_caps, inheriting", app.value().title);
+        }
+      }
+    }
     state::update_profiles_in_memory(
         state_->app_state->config,
         profiles | //

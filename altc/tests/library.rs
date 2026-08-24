@@ -33,6 +33,7 @@ fn fake_wolf(apps: Apps) -> Router {
                     "av1_gst_pipeline",
                     "opus_gst_pipeline",
                     "render_node",
+                    "video_producer_buffer_caps",
                     "start_virtual_compositor",
                     "start_audio_server",
                 ] {
@@ -63,6 +64,7 @@ fn seed_app(id: &str, title: &str) -> Value {
         "render_node": "/dev/dri/renderD128",
         "h264_gst_pipeline": "h264-template", "hevc_gst_pipeline": "hevc-template",
         "av1_gst_pipeline": "av1-template", "opus_gst_pipeline": "opus-template",
+        "video_producer_buffer_caps": "video/x-raw, format=NV12",
         "start_virtual_compositor": true, "start_audio_server": true,
         "runner": {"type": "docker", "image": "ghcr.io/matt953/wolf-runner:v7",
                    "mounts": ["/games/bg3:/games/bg3:rw"], "env": ["RUN_EXE=/games/bg3/bg3.exe"]},
@@ -109,6 +111,9 @@ async fn adopts_wolfs_apps_then_pushes_them_back_identically() {
     assert_eq!(one["h264_gst_pipeline"], "h264-template");
     assert_eq!(one["opus_gst_pipeline"], "opus-template");
     assert_eq!(one["runner"]["image"], "ghcr.io/matt953/wolf-runner:v7");
+    // Wolf's reflector dropped this until 2026-08-24; an app without it builds
+    // a malformed video pipeline and never launches.
+    assert_eq!(one["video_producer_buffer_caps"], "video/x-raw, format=NV12");
     assert_eq!(one["runner"]["mounts"][0], "/games/bg3:/games/bg3:rw");
 }
 
@@ -143,6 +148,38 @@ async fn a_process_runner_survives_the_round_trip() {
     assert_eq!(apps.lock().unwrap()[0]["runner"], ball["runner"]);
 }
 
+// Regression 2026-08-24: pushing used one shared engine_defaults row, so an
+// app that overrides its pipelines (Test ball) came back with another app's.
+#[tokio::test]
+async fn each_apps_engine_overrides_survive_a_push() {
+    let pool = db::init_memory().await;
+    let mut ball = seed_app("249285395", "Test ball");
+    ball["h264_gst_pipeline"] = json!("videotestsrc pattern=ball");
+    ball["hevc_gst_pipeline"] = json!("videotestsrc pattern=ball");
+    ball["av1_gst_pipeline"] = json!("videotestsrc pattern=ball");
+    ball["opus_gst_pipeline"] = json!("audiotestsrc wave=ticks");
+    ball["start_audio_server"] = json!(false);
+    ball["start_virtual_compositor"] = json!(false);
+
+    let bg3 = seed_app("578802895", "Baldur's Gate 3");
+    let (wolf, apps) = start("overrides", vec![bg3.clone(), ball.clone()]).await;
+    library::import_if_empty(&pool, &wolf).await.unwrap();
+    apps.lock().unwrap().clear();
+    library::push(&pool, &wolf).await.unwrap();
+
+    let out = apps.lock().unwrap().clone();
+    let find = |id: &str| out.iter().find(|a| a["id"] == json!(id)).unwrap().clone();
+    let got_ball = find("249285395");
+    assert_eq!(got_ball["h264_gst_pipeline"], ball["h264_gst_pipeline"]);
+    assert_eq!(got_ball["opus_gst_pipeline"], ball["opus_gst_pipeline"]);
+    assert_eq!(got_ball["start_audio_server"], json!(false));
+    assert_eq!(got_ball["start_virtual_compositor"], json!(false));
+
+    let got_bg3 = find("578802895");
+    assert_eq!(got_bg3["h264_gst_pipeline"], bg3["h264_gst_pipeline"]);
+    assert_eq!(got_bg3["start_audio_server"], json!(true));
+}
+
 #[tokio::test]
 async fn import_runs_once_not_on_every_reconnect() {
     let pool = db::init_memory().await;
@@ -173,11 +210,11 @@ async fn repeated_pushes_do_not_duplicate_apps() {
 }
 
 #[tokio::test]
-async fn push_without_engine_defaults_is_refused_rather_than_half_done() {
+async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
     let pool = db::init_memory().await;
     let (wolf, apps) = start("nodefaults", vec![]).await;
-    // A game with no engine defaults recorded: pushing would build payloads
-    // Wolf rejects field-by-field, leaving a partial library.
+    // A game with no pipelines: Wolf accepts the payload and then cannot
+    // build a session for it, so refuse before sending anything.
     db::games::upsert(
         &pool,
         &db::games::Game {
@@ -187,6 +224,13 @@ async fn push_without_engine_defaults_is_refused_rather_than_half_done() {
             icon_png_path: String::new(),
             render_node: "/dev/dri/renderD128".into(),
             runner_json: "{}".into(),
+            video_producer_buffer_caps: String::new(),
+            h264_gst_pipeline: String::new(),
+            hevc_gst_pipeline: String::new(),
+            av1_gst_pipeline: String::new(),
+            opus_gst_pipeline: String::new(),
+            start_audio_server: true,
+            start_virtual_compositor: true,
         },
     )
     .await

@@ -61,7 +61,8 @@ async fn schema(pool: &SqlitePool) {
             PRIMARY KEY (app_id, user_id)
         );
         -- The library. id is ours and authoritative: Wolf honours the id we
-        -- send and never persists one of its own.
+        -- send and never persists one of its own. The pipelines are per app,
+        -- not global: Test ball legitimately overrides all four.
         CREATE TABLE IF NOT EXISTS games (
             id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
@@ -69,10 +70,16 @@ async fn schema(pool: &SqlitePool) {
             icon_png_path TEXT NOT NULL DEFAULT '',
             render_node TEXT NOT NULL DEFAULT '',
             runner_json TEXT NOT NULL,
+            video_producer_buffer_caps TEXT NOT NULL DEFAULT '',
+            h264_gst_pipeline TEXT NOT NULL DEFAULT '',
+            hevc_gst_pipeline TEXT NOT NULL DEFAULT '',
+            av1_gst_pipeline TEXT NOT NULL DEFAULT '',
+            opus_gst_pipeline TEXT NOT NULL DEFAULT '',
+            start_audio_server BOOLEAN NOT NULL DEFAULT 1,
+            start_virtual_compositor BOOLEAN NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
-        -- Engine config Wolf demands on every app but that belongs to no
-        -- single game. One row; seeded on import.
+        -- Template for games WE create later (M3), never imposed on imports.
         CREATE TABLE IF NOT EXISTS engine_defaults (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             h264_gst_pipeline TEXT NOT NULL,

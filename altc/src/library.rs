@@ -16,7 +16,8 @@ pub async fn import_if_empty(pool: &SqlitePool, wolf: &WolfClient) -> Result<usi
         if app["title"].as_str().unwrap_or_default().is_empty() {
             continue;
         }
-        // Seed engine config once, from the first real app that carries it.
+        // Each app keeps its own engine config. The first one also seeds the
+        // template for games we create ourselves later (M3).
         if games::engine_defaults(pool).await?.is_none() {
             games::set_engine_defaults(pool, &defaults_from(app)).await?;
         }
@@ -28,13 +29,24 @@ pub async fn import_if_empty(pool: &SqlitePool, wolf: &WolfClient) -> Result<usi
 }
 
 fn game_from(app: &Value) -> Game {
+    let s = |k: &str| app[k].as_str().unwrap_or_default().to_string();
     Game {
-        id: app["id"].as_str().unwrap_or_default().to_string(),
-        title: app["title"].as_str().unwrap_or_default().to_string(),
+        id: s("id"),
+        title: s("title"),
         support_hdr: app["support_hdr"].as_bool().unwrap_or(false),
-        icon_png_path: app["icon_png_path"].as_str().unwrap_or("").to_string(),
-        render_node: app["render_node"].as_str().unwrap_or("").to_string(),
+        icon_png_path: s("icon_png_path"),
+        render_node: s("render_node"),
         runner_json: app["runner"].to_string(),
+        // Dropped by Wolf's own reflector until 2026-08-24; without it the
+        // video producer pipeline is malformed and the app cannot launch.
+        video_producer_buffer_caps: s("video_producer_buffer_caps"),
+        // Copied per app, never shared: an app may override any of these.
+        h264_gst_pipeline: s("h264_gst_pipeline"),
+        hevc_gst_pipeline: s("hevc_gst_pipeline"),
+        av1_gst_pipeline: s("av1_gst_pipeline"),
+        opus_gst_pipeline: s("opus_gst_pipeline"),
+        start_audio_server: app["start_audio_server"].as_bool().unwrap_or(true),
+        start_virtual_compositor: app["start_virtual_compositor"].as_bool().unwrap_or(true),
     }
 }
 
@@ -50,8 +62,9 @@ fn defaults_from(app: &Value) -> EngineDefaults {
     }
 }
 
-/// A game plus the engine config Wolf insists on, as an apps/add payload.
-pub fn to_wolf_app(g: &Game, d: &EngineDefaults) -> Value {
+/// A game as an apps/add payload. Engine config comes from the game itself,
+/// so an app that overrides a pipeline keeps its override.
+pub fn to_wolf_app(g: &Game) -> Value {
     let runner: Value = serde_json::from_str(&g.runner_json).unwrap_or_else(|_| json!({}));
     json!({
         "id": g.id,
@@ -59,12 +72,13 @@ pub fn to_wolf_app(g: &Game, d: &EngineDefaults) -> Value {
         "support_hdr": g.support_hdr,
         "icon_png_path": g.icon_png_path,
         "render_node": g.render_node,
-        "h264_gst_pipeline": d.h264_gst_pipeline,
-        "hevc_gst_pipeline": d.hevc_gst_pipeline,
-        "av1_gst_pipeline": d.av1_gst_pipeline,
-        "opus_gst_pipeline": d.opus_gst_pipeline,
-        "start_audio_server": d.start_audio_server,
-        "start_virtual_compositor": d.start_virtual_compositor,
+        "video_producer_buffer_caps": g.video_producer_buffer_caps,
+        "h264_gst_pipeline": g.h264_gst_pipeline,
+        "hevc_gst_pipeline": g.hevc_gst_pipeline,
+        "av1_gst_pipeline": g.av1_gst_pipeline,
+        "opus_gst_pipeline": g.opus_gst_pipeline,
+        "start_audio_server": g.start_audio_server,
+        "start_virtual_compositor": g.start_virtual_compositor,
         "runner": runner,
     })
 }
@@ -77,12 +91,15 @@ pub async fn push(pool: &SqlitePool, wolf: &WolfClient) -> Result<usize, ApiErro
     if ours.is_empty() {
         return Ok(0);
     }
-    let Some(defaults) = games::engine_defaults(pool).await? else {
-        return Err(ApiError::internal(
-            "no engine defaults; cannot push library",
-        ));
-    };
-    let payloads: Vec<Value> = ours.iter().map(|g| to_wolf_app(g, &defaults)).collect();
+    // Refuse rather than push a game with no pipelines: Wolf accepts it and
+    // then cannot build a session for it.
+    if let Some(g) = ours.iter().find(|g| g.hevc_gst_pipeline.is_empty()) {
+        return Err(ApiError::internal(format!(
+            "game '{}' has no engine config; refusing to push a partial library",
+            g.title
+        )));
+    }
+    let payloads: Vec<Value> = ours.iter().map(to_wolf_app).collect();
 
     // We own every app now, so Wolf's list is replaced wholesale.
     for app in &wolf.apps_raw().await? {
@@ -112,18 +129,36 @@ mod tests {
             "hevc_gst_pipeline": "hevc...",
             "av1_gst_pipeline": "av1...",
             "opus_gst_pipeline": "opus...",
+            "video_producer_buffer_caps": "video/x-raw, format=NV12",
             "start_audio_server": true,
             "start_virtual_compositor": true,
             "runner": {"type": "docker", "image": "wolf-runner:v7"},
         })
     }
 
+    // Test ball as it really is in Wolf: its own sources, and both servers off.
+    fn overriding_app() -> Value {
+        json!({
+            "id": "249285395",
+            "title": "Test ball",
+            "support_hdr": false,
+            "icon_png_path": "",
+            "render_node": "/dev/dri/renderD128",
+            "h264_gst_pipeline": "videotestsrc pattern=ball ...",
+            "hevc_gst_pipeline": "videotestsrc pattern=ball ...",
+            "av1_gst_pipeline": "videotestsrc pattern=ball ...",
+            "opus_gst_pipeline": "audiotestsrc wave=ticks ...",
+            "video_producer_buffer_caps": "video/x-raw, format=NV12",
+            "start_audio_server": false,
+            "start_virtual_compositor": false,
+            "runner": {"type": "process", "run_cmd": "sh -c 'sleep 10'"},
+        })
+    }
+
     #[test]
     fn round_trips_an_app_through_the_library_shape() {
         let app = sample_app();
-        let g = game_from(&app);
-        let d = defaults_from(&app);
-        let out = to_wolf_app(&g, &d);
+        let out = to_wolf_app(&game_from(&app));
         // Every field Wolf demands must survive; it defaults none of them.
         for key in [
             "id",
@@ -135,6 +170,7 @@ mod tests {
             "hevc_gst_pipeline",
             "av1_gst_pipeline",
             "opus_gst_pipeline",
+            "video_producer_buffer_caps",
             "start_audio_server",
             "start_virtual_compositor",
             "runner",
@@ -143,21 +179,35 @@ mod tests {
         }
     }
 
+    // Regression, 2026-08-24: a shared engine_defaults row flattened Test
+    // ball onto Wolf UI's pipelines, so it streamed nothing.
+    #[test]
+    fn an_apps_engine_overrides_are_not_replaced_by_another_apps() {
+        let (normal, ball) = (sample_app(), overriding_app());
+        let out_ball = to_wolf_app(&game_from(&ball));
+        let out_normal = to_wolf_app(&game_from(&normal));
+
+        assert_eq!(out_ball["h264_gst_pipeline"], ball["h264_gst_pipeline"]);
+        assert_eq!(out_ball["opus_gst_pipeline"], ball["opus_gst_pipeline"]);
+        assert_eq!(out_ball["start_audio_server"], json!(false));
+        assert_eq!(out_ball["start_virtual_compositor"], json!(false));
+        // ...and the ordinary app is untouched by the override's presence.
+        assert_eq!(out_normal["h264_gst_pipeline"], normal["h264_gst_pipeline"]);
+        assert_eq!(out_normal["start_audio_server"], json!(true));
+    }
+
     #[test]
     fn id_is_carried_through_unchanged() {
-        let app = sample_app();
-        let g = game_from(&app);
-        let d = defaults_from(&app);
-        assert_eq!(to_wolf_app(&g, &d)["id"], json!("578802895"));
+        assert_eq!(
+            to_wolf_app(&game_from(&sample_app()))["id"],
+            json!("578802895")
+        );
     }
 
     #[tokio::test]
     async fn import_is_idempotent_and_push_needs_defaults() {
         let pool = crate::db::init_memory().await;
         let app = sample_app();
-        games::set_engine_defaults(&pool, &defaults_from(&app))
-            .await
-            .unwrap();
         games::upsert(&pool, &game_from(&app)).await.unwrap();
         assert_eq!(games::count(&pool).await.unwrap(), 1);
         // Re-importing must not duplicate: same id upserts in place.

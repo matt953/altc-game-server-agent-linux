@@ -57,6 +57,13 @@ template <> struct Reflector<events::App> {
     std::string opus_gst_pipeline;
     bool start_virtual_compositor;
     bool start_audio_server;
+    /**
+     * Optional so older callers still work, but they must NOT silently get an
+     * empty one: an app added without it built a malformed video-producer
+     * pipeline and could never launch (field-diagnosed 2026-08-24).
+     * endpoint_AddApp fills it from the config default when absent.
+     */
+    std::optional<std::string> video_producer_buffer_caps;
     Reflector<events::Runner>::ReflType runner;
   };
 
@@ -72,6 +79,7 @@ template <> struct Reflector<events::App> {
             .opus_gst_pipeline = v.opus_gst_pipeline,
             .start_virtual_compositor = v.start_virtual_compositor,
             .start_audio_server = v.start_audio_server,
+            .video_producer_buffer_caps = v.video_producer_buffer_caps,
             .runner = v.runner->serialize()};
   }
 
@@ -79,6 +87,7 @@ template <> struct Reflector<events::App> {
     auto runner = Reflector<events::Runner>::to(app.runner, ev_bus);
     return events::App{
         .base = {.title = app.title, .id = app.id, .support_hdr = app.support_hdr, .icon_png_path = app.icon_png_path},
+        .video_producer_buffer_caps = app.video_producer_buffer_caps.value_or(""),
         .h264_gst_pipeline = app.h264_gst_pipeline,
         .hevc_gst_pipeline = app.hevc_gst_pipeline,
         .av1_gst_pipeline = app.av1_gst_pipeline,

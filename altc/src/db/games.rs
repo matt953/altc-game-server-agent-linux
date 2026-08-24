@@ -2,8 +2,11 @@ use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-// Library data only. Engine config (gstreamer pipelines, audio/compositor
-// flags) is not a property of a game and lives in engine_defaults.
+// Engine config is per app in Wolf's model, not global: Test ball overrides
+// all four pipelines with videotestsrc/audiotestsrc and turns the compositor
+// and audio server off. Storing one shared copy flattened that (2026-08-24),
+// so every app carries its own. engine_defaults is only a template for games
+// we create ourselves.
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Game {
     pub id: String,
@@ -12,6 +15,13 @@ pub struct Game {
     pub icon_png_path: String,
     pub render_node: String,
     pub runner_json: String,
+    pub video_producer_buffer_caps: String,
+    pub h264_gst_pipeline: String,
+    pub hevc_gst_pipeline: String,
+    pub av1_gst_pipeline: String,
+    pub opus_gst_pipeline: String,
+    pub start_audio_server: bool,
+    pub start_virtual_compositor: bool,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Game>, ApiError> {
@@ -30,14 +40,23 @@ pub async fn count(pool: &SqlitePool) -> Result<i64, ApiError> {
 
 pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     sqlx::query(
-        "INSERT INTO games (id, title, support_hdr, icon_png_path, render_node, runner_json)
-         VALUES (?, ?, ?, ?, ?, ?)
+        "INSERT INTO games (id, title, support_hdr, icon_png_path, render_node, runner_json,
+                            video_producer_buffer_caps, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
+                            opus_gst_pipeline, start_audio_server, start_virtual_compositor)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             support_hdr = excluded.support_hdr,
             icon_png_path = excluded.icon_png_path,
             render_node = excluded.render_node,
-            runner_json = excluded.runner_json",
+            runner_json = excluded.runner_json,
+            video_producer_buffer_caps = excluded.video_producer_buffer_caps,
+            h264_gst_pipeline = excluded.h264_gst_pipeline,
+            hevc_gst_pipeline = excluded.hevc_gst_pipeline,
+            av1_gst_pipeline = excluded.av1_gst_pipeline,
+            opus_gst_pipeline = excluded.opus_gst_pipeline,
+            start_audio_server = excluded.start_audio_server,
+            start_virtual_compositor = excluded.start_virtual_compositor",
     )
     .bind(&g.id)
     .bind(&g.title)
@@ -45,12 +64,19 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     .bind(&g.icon_png_path)
     .bind(&g.render_node)
     .bind(&g.runner_json)
+    .bind(&g.video_producer_buffer_caps)
+    .bind(&g.h264_gst_pipeline)
+    .bind(&g.hevc_gst_pipeline)
+    .bind(&g.av1_gst_pipeline)
+    .bind(&g.opus_gst_pipeline)
+    .bind(g.start_audio_server)
+    .bind(g.start_virtual_compositor)
     .execute(pool)
     .await?;
     Ok(())
 }
 
-/// The engine config every app carries a copy of. One row, seeded at import.
+/// Template used when WE create a game (M3). Never imposed on an imported one.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct EngineDefaults {
     pub h264_gst_pipeline: String,

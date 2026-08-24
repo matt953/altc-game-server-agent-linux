@@ -297,6 +297,31 @@ TEST_CASE("APPs APIs", "[API]") {
   REQUIRE(apps3.apps.size() == 2);
 }
 
+TEST_CASE("An app survives a serialize round trip with its producer caps", "[API]") {
+  // Reflector<App> omitted video_producer_buffer_caps, so any app added over
+  // the socket API came back with an empty one, built a malformed video
+  // producer pipeline, and could never launch (field-diagnosed 2026-08-24).
+  auto event_bus = std::make_shared<events::EventBusType>();
+  auto original = events::App{
+      .base = {.title = "Round trip", .id = "42", .support_hdr = false, .icon_png_path = ""},
+      .video_producer_buffer_caps = "video/x-raw, format=NV12",
+      .h264_gst_pipeline = "h264",
+      .hevc_gst_pipeline = "hevc",
+      .av1_gst_pipeline = "av1",
+      .render_node = "/dev/dri/renderD128",
+      .opus_gst_pipeline = "opus",
+      .start_virtual_compositor = true,
+      .start_audio_server = true,
+      .runner = state::get_runner(
+          rfl::json::read<wolf::config::AppCMD>(R"({"type":"process","run_cmd":"sh -c true"})").value(),
+          event_bus)};
+
+  auto wire = rfl::Reflector<events::App>::from(original);
+  auto back = rfl::Reflector<events::App>::to(wire, event_bus);
+  REQUIRE(back.video_producer_buffer_caps == original.video_producer_buffer_caps);
+  REQUIRE(back.base.id == "42");
+}
+
 TEST_CASE("Apps are held in memory and never written to the config", "[API]") {
   // The altc agent owns the library and re-pushes it on every connection.
   // Persisting apps here would leave a second copy that drifts, and whose ids
