@@ -197,6 +197,11 @@ async fn sync_library(pool: &sqlx::SqlitePool, wolf: &WolfClient) {
         tracing::error!("library import failed: {}", e.1);
         return;
     }
+    // Rows written before per-app engine config need Wolf's copy to complete
+    // them; without this they would be refused by the push below.
+    if let Err(e) = crate::library::backfill_engine_config(pool, wolf).await {
+        tracing::error!("library backfill failed: {}", e.1);
+    }
     if let Err(e) = crate::library::push(pool, wolf).await {
         tracing::error!("library push failed: {}", e.1);
     }

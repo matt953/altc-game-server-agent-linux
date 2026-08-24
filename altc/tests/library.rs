@@ -242,36 +242,96 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
     assert!(apps.lock().unwrap().is_empty(), "nothing may be sent");
 }
 
-// A games table from before per-app engine config is dropped and rebuilt on
-// the next connect, rather than left unreadable.
+// Rows written before per-app engine config are completed from Wolf's own
+// copy, not dropped: a game we own but Wolf has never seen must survive.
 #[tokio::test]
-async fn a_stale_games_table_is_rebuilt_not_left_broken() {
+async fn backfill_completes_old_rows_and_keeps_overrides() {
     let pool = db::init_memory().await;
-    sqlx::query("DROP TABLE games")
-        .execute(&pool)
+    let mut ball = seed_app("249285395", "Test ball");
+    ball["h264_gst_pipeline"] = json!("videotestsrc pattern=ball");
+    ball["hevc_gst_pipeline"] = json!("videotestsrc pattern=ball");
+    ball["opus_gst_pipeline"] = json!("audiotestsrc wave=ticks");
+    ball["start_audio_server"] = json!(false);
+    let (wolf, _apps) = start("backfill", vec![ball.clone(), seed_app("1", "One")]).await;
+
+    // Two rows as the old schema left them: no engine config at all.
+    for (id, title) in [("249285395", "Test ball"), ("1", "One")] {
+        db::games::upsert(
+            &pool,
+            &db::games::Game {
+                id: id.into(),
+                title: title.into(),
+                support_hdr: false,
+                icon_png_path: String::new(),
+                render_node: "/dev/dri/renderD128".into(),
+                runner_json: "{\"type\":\"docker\"}".into(),
+                video_producer_buffer_caps: String::new(),
+                h264_gst_pipeline: String::new(),
+                hevc_gst_pipeline: String::new(),
+                av1_gst_pipeline: String::new(),
+                opus_gst_pipeline: String::new(),
+                start_audio_server: true,
+                start_virtual_compositor: true,
+            },
+        )
         .await
         .unwrap();
-    sqlx::query(
-        "CREATE TABLE games (id TEXT PRIMARY KEY, title TEXT NOT NULL, support_hdr BOOLEAN NOT NULL
-         DEFAULT 0, icon_png_path TEXT NOT NULL DEFAULT '', render_node TEXT NOT NULL DEFAULT '',
-         runner_json TEXT NOT NULL)",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO games (id,title,runner_json) VALUES ('1','Old','{}')")
-        .execute(&pool)
-        .await
-        .unwrap();
+    }
 
-    db::run_schema(&pool).await;
-
-    // Dropped, so the next import repopulates it in the current shape.
-    assert_eq!(db::games::count(&pool).await.unwrap(), 0);
-    let (wolf, _apps) = start("stale", vec![seed_app("1", "One")]).await;
-    assert_eq!(library::import_if_empty(&pool, &wolf).await.unwrap(), 1);
     assert_eq!(
-        db::games::list(&pool).await.unwrap()[0].video_producer_buffer_caps,
+        library::backfill_engine_config(&pool, &wolf).await.unwrap(),
+        2
+    );
+
+    let rows = db::games::list(&pool).await.unwrap();
+    let ball_row = rows.iter().find(|g| g.id == "249285395").unwrap();
+    assert_eq!(ball_row.hevc_gst_pipeline, "videotestsrc pattern=ball");
+    assert_eq!(ball_row.opus_gst_pipeline, "audiotestsrc wave=ticks");
+    assert!(
+        !ball_row.start_audio_server,
+        "override must survive backfill"
+    );
+    assert_eq!(
+        ball_row.video_producer_buffer_caps,
         "video/x-raw, format=NV12"
     );
+    // Rows are completed in place: nothing was dropped or renamed.
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|g| g.title == "One"));
+}
+
+// A game we own that Wolf has never seen keeps its row rather than being
+// deleted; it is reported and held back from the push instead.
+#[tokio::test]
+async fn backfill_keeps_a_game_wolf_does_not_know() {
+    let pool = db::init_memory().await;
+    let (wolf, _apps) = start("orphan", vec![seed_app("1", "One")]).await;
+    db::games::upsert(
+        &pool,
+        &db::games::Game {
+            id: "999".into(),
+            title: "Added by hand".into(),
+            support_hdr: false,
+            icon_png_path: String::new(),
+            render_node: "/dev/dri/renderD128".into(),
+            runner_json: "{}".into(),
+            video_producer_buffer_caps: String::new(),
+            h264_gst_pipeline: String::new(),
+            hevc_gst_pipeline: String::new(),
+            av1_gst_pipeline: String::new(),
+            opus_gst_pipeline: String::new(),
+            start_audio_server: true,
+            start_virtual_compositor: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        library::backfill_engine_config(&pool, &wolf).await.unwrap(),
+        0
+    );
+    let rows = db::games::list(&pool).await.unwrap();
+    assert_eq!(rows.len(), 1, "the row must not be deleted");
+    assert_eq!(rows[0].title, "Added by hand");
 }

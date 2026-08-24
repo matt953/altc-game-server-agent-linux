@@ -62,6 +62,53 @@ fn defaults_from(app: &Value) -> EngineDefaults {
     }
 }
 
+/// Fill in engine config for rows that predate it, from Wolf's own copy of the
+/// same app. Per app, so an override (Test ball's videotestsrc) is preserved;
+/// a game Wolf has never heard of is left alone and reported, because it is
+/// ours and inventing engine config for it would be a guess.
+pub async fn backfill_engine_config(
+    pool: &SqlitePool,
+    wolf: &WolfClient,
+) -> Result<usize, ApiError> {
+    let stale: Vec<Game> = games::list(pool)
+        .await?
+        .into_iter()
+        .filter(|g| g.hevc_gst_pipeline.is_empty() || g.video_producer_buffer_caps.is_empty())
+        .collect();
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let from_wolf: std::collections::HashMap<String, Value> = wolf
+        .apps_raw()
+        .await?
+        .into_iter()
+        .filter_map(|a| {
+            let id = a["id"].as_str()?.to_string();
+            Some((id, a))
+        })
+        .collect();
+
+    let mut healed = 0;
+    for g in stale {
+        let Some(app) = from_wolf.get(&g.id) else {
+            tracing::error!(
+                "library: '{}' has no engine config and wolf has no copy of it; it will not be pushed",
+                g.title
+            );
+            continue;
+        };
+        let mut fixed = game_from(app);
+        // Only engine config comes from Wolf; anything we own stays ours.
+        fixed.title = g.title;
+        fixed.icon_png_path = g.icon_png_path;
+        fixed.runner_json = g.runner_json;
+        games::upsert(pool, &fixed).await?;
+        healed += 1;
+    }
+    tracing::info!("library: backfilled engine config for {healed} games");
+    Ok(healed)
+}
+
 /// A game as an apps/add payload. Engine config comes from the game itself,
 /// so an app that overrides a pipeline keeps its override.
 pub fn to_wolf_app(g: &Game) -> Value {

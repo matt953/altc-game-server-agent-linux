@@ -1,5 +1,6 @@
 pub mod devices;
 pub mod games;
+pub mod migrations;
 pub mod shares;
 pub mod tokens;
 pub mod users;
@@ -30,101 +31,12 @@ pub async fn init_memory() -> SqlitePool {
     pool
 }
 
-/// The library is fully re-derivable from Wolf on the next connect, so a games
-/// table from an older shape is dropped rather than migrated. app_shares is
-/// keyed by app id and survives, because the ids do not change.
-/// This is only safe while nothing but an import writes games: once games can
-/// be authored over the API (M3), this must become a real migration.
-async fn migrate_games(pool: &SqlitePool) {
-    let exists: Option<String> =
-        sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type='table' AND name='games'")
-            .fetch_optional(pool)
-            .await
-            .expect("check games table");
-    if exists.is_none() {
-        return;
-    }
-    let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('games')")
-        .fetch_all(pool)
-        .await
-        .expect("read games columns");
-    if !cols.iter().any(|c| c == "video_producer_buffer_caps") {
-        tracing::warn!("library: games table predates per-app engine config, rebuilding from wolf");
-        sqlx::query("DROP TABLE games")
-            .execute(pool)
-            .await
-            .expect("drop stale games table");
-    }
-}
-
 pub async fn run_schema(pool: &SqlitePool) {
     schema(pool).await
 }
 
 async fn schema(pool: &SqlitePool) {
-    migrate_games(pool).await;
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            role TEXT NOT NULL CHECK (role IN ('owner','admin','member')),
-            locale TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS tokens (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            token_hash TEXT NOT NULL UNIQUE,
-            label TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            last_used_at TEXT
-        );
-        CREATE TABLE IF NOT EXISTS devices (
-            id INTEGER PRIMARY KEY,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            client_id TEXT NOT NULL UNIQUE,
-            name TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        -- No rows for an app_id = shared with everyone (default).
-        CREATE TABLE IF NOT EXISTS app_shares (
-            app_id TEXT NOT NULL,
-            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            PRIMARY KEY (app_id, user_id)
-        );
-        -- The library. id is ours and authoritative: Wolf honours the id we
-        -- send and never persists one of its own. The pipelines are per app,
-        -- not global: Test ball legitimately overrides all four.
-        CREATE TABLE IF NOT EXISTS games (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            support_hdr BOOLEAN NOT NULL DEFAULT 0,
-            icon_png_path TEXT NOT NULL DEFAULT '',
-            render_node TEXT NOT NULL DEFAULT '',
-            runner_json TEXT NOT NULL,
-            video_producer_buffer_caps TEXT NOT NULL DEFAULT '',
-            h264_gst_pipeline TEXT NOT NULL DEFAULT '',
-            hevc_gst_pipeline TEXT NOT NULL DEFAULT '',
-            av1_gst_pipeline TEXT NOT NULL DEFAULT '',
-            opus_gst_pipeline TEXT NOT NULL DEFAULT '',
-            start_audio_server BOOLEAN NOT NULL DEFAULT 1,
-            start_virtual_compositor BOOLEAN NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        -- Template for games WE create later (M3), never imposed on imports.
-        CREATE TABLE IF NOT EXISTS engine_defaults (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            h264_gst_pipeline TEXT NOT NULL,
-            hevc_gst_pipeline TEXT NOT NULL,
-            av1_gst_pipeline TEXT NOT NULL,
-            opus_gst_pipeline TEXT NOT NULL,
-            start_audio_server BOOLEAN NOT NULL DEFAULT 1,
-            start_virtual_compositor BOOLEAN NOT NULL DEFAULT 1
-        );",
-    )
-    .execute(pool)
-    .await
-    .expect("create schema");
+    migrations::run(pool).await;
 }
 
 // First boot: create the owner and print their token exactly once.
