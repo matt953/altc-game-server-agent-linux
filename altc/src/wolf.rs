@@ -162,6 +162,24 @@ impl WolfClient {
         serde_json::from_value(v["apps"].clone()).map_err(|e| WolfError(e.to_string()))
     }
 
+    /// Apps exactly as Wolf holds them, for import and reconciliation.
+    pub async fn apps_raw(&self) -> Result<Vec<Value>, WolfError> {
+        let v = self.request("GET", "/api/v1/apps", None).await?;
+        serde_json::from_value(v["apps"].clone()).map_err(|e| WolfError(e.to_string()))
+    }
+
+    pub async fn add_app(&self, app: Value) -> Result<(), WolfError> {
+        self.request("POST", "/api/v1/apps/add", Some(app))
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn delete_app(&self, id: &str) -> Result<(), WolfError> {
+        self.request("POST", "/api/v1/apps/delete", Some(json!({"id": id})))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn paired_clients(&self) -> Result<Vec<PairedClient>, WolfError> {
         let v = self.request("GET", "/api/v1/clients", None).await?;
         serde_json::from_value(v["clients"].clone()).map_err(|e| WolfError(e.to_string()))

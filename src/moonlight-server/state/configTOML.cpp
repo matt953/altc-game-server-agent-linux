@@ -500,6 +500,10 @@ void update_client_settings(const Config &cfg, std::size_t client_id, const Pair
   save_verified(cfg.config_source, tml);
 }
 
+void update_profiles_in_memory(const Config &cfg, const ProfilesList &profiles) {
+  cfg.profiles->store(profiles);
+}
+
 void update_profiles(const Config &cfg, const ProfilesList &profiles) {
   cfg.profiles->store(profiles);
 

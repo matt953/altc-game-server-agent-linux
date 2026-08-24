@@ -105,7 +105,7 @@ void UnixSocketServer::endpoint_AddApp(const HTTPRequest &req, std::shared_ptr<U
   auto app = rfl::json::read<rfl::Reflector<events::App>::ReflType>(req.body);
   if (app) {
     auto profiles = state_->app_state->config->profiles->load().get();
-    state::update_profiles(
+    state::update_profiles_in_memory(
         state_->app_state->config,
         profiles | //
             ranges::views::transform([app = app.value(), this](const immer::box<events::Profile> &profile) {
@@ -130,7 +130,7 @@ void UnixSocketServer::endpoint_RemoveApp(const HTTPRequest &req, std::shared_pt
   auto app = rfl::json::read<AppDeleteRequest>(req.body);
   if (app) {
     auto profiles = state_->app_state->config->profiles->load().get();
-    state::update_profiles(
+    state::update_profiles_in_memory(
         state_->app_state->config,
         profiles | //
             ranges::views::transform([app = app.value(), this](const immer::box<events::Profile> &profile) {

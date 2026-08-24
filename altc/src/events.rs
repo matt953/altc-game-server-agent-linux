@@ -190,19 +190,36 @@ fn stringify_id(v: &Value) -> String {
     }
 }
 
+// Adopt whatever Wolf already had on first ever run, then make its list match
+// ours. Failure here must not kill the bridge: events still matter.
+async fn sync_library(pool: &sqlx::SqlitePool, wolf: &WolfClient) {
+    if let Err(e) = crate::library::import_if_empty(pool, wolf).await {
+        tracing::error!("library import failed: {}", e.1);
+        return;
+    }
+    if let Err(e) = crate::library::push(pool, wolf).await {
+        tracing::error!("library push failed: {}", e.1);
+    }
+}
+
 // Reconnects forever: Wolf restarting must not kill the bridge.
 // Logs only on transitions so a long outage doesn't spam.
-pub fn spawn_bridge(wolf: WolfClient, hub: EventHub) {
+pub fn spawn_bridge(wolf: WolfClient, hub: EventHub, pool: sqlx::SqlitePool) {
     tokio::spawn(async move {
         let mut was_connected = false;
         loop {
             let connected = Arc::new(Mutex::new(false));
             let flag = connected.clone();
+            let (sync_wolf, sync_pool) = (wolf.clone(), pool.clone());
             let result = wolf
                 .stream_events(
                     move || {
                         *flag.lock().unwrap() = true;
                         tracing::info!("wolf event bridge connected");
+                        // Wolf holds the library in memory only, so every
+                        // (re)connect is also "Wolf lost the apps, re-send".
+                        let (w, p) = (sync_wolf.clone(), sync_pool.clone());
+                        tokio::spawn(async move { sync_library(&p, &w).await });
                     },
                     |kind, data| hub.publish(kind, data),
                 )

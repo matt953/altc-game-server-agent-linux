@@ -38,7 +38,7 @@ async fn main() {
 
     let wolf = WolfClient::from_env();
     let events = EventHub::new();
-    spawn_bridge(wolf.clone(), events.clone());
+    spawn_bridge(wolf.clone(), events.clone(), pool.clone());
 
     let app = routes::router(AppState { pool, wolf, events });
     let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)

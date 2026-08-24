@@ -1,4 +1,5 @@
 pub mod devices;
+pub mod games;
 pub mod shares;
 pub mod tokens;
 pub mod users;
@@ -58,6 +59,28 @@ async fn schema(pool: &SqlitePool) {
             app_id TEXT NOT NULL,
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             PRIMARY KEY (app_id, user_id)
+        );
+        -- The library. id is ours and authoritative: Wolf honours the id we
+        -- send and never persists one of its own.
+        CREATE TABLE IF NOT EXISTS games (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            support_hdr BOOLEAN NOT NULL DEFAULT 0,
+            icon_png_path TEXT NOT NULL DEFAULT '',
+            render_node TEXT NOT NULL DEFAULT '',
+            runner_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        -- Engine config Wolf demands on every app but that belongs to no
+        -- single game. One row; seeded on import.
+        CREATE TABLE IF NOT EXISTS engine_defaults (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            h264_gst_pipeline TEXT NOT NULL,
+            hevc_gst_pipeline TEXT NOT NULL,
+            av1_gst_pipeline TEXT NOT NULL,
+            opus_gst_pipeline TEXT NOT NULL,
+            start_audio_server BOOLEAN NOT NULL DEFAULT 1,
+            start_virtual_compositor BOOLEAN NOT NULL DEFAULT 1
         );",
     )
     .execute(pool)

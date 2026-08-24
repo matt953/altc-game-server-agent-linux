@@ -297,6 +297,25 @@ TEST_CASE("APPs APIs", "[API]") {
   REQUIRE(apps3.apps.size() == 2);
 }
 
+TEST_CASE("Apps are held in memory and never written to the config", "[API]") {
+  // The altc agent owns the library and re-pushes it on every connection.
+  // Persisting apps here would leave a second copy that drifts, and whose ids
+  // get re-derived from the title on load. Adding an app must not touch disk.
+  auto event_bus = std::make_shared<events::EventBusType>();
+  auto running_sessions = std::make_shared<immer::atom<immer::vector<events::StreamSession>>>();
+  auto config = state::load_or_default("config.test.toml", event_bus, running_sessions);
+  config.config_source = "config.test.NOPERSIST.toml";
+  std::filesystem::remove(config.config_source);
+
+  auto profiles = config.profiles->load().get();
+  state::update_profiles_in_memory({config}, profiles);
+
+  // Nothing on disk, and the change is live in memory.
+  REQUIRE_FALSE(std::filesystem::exists(config.config_source));
+  REQUIRE(config.profiles->load().get().size() == profiles.size());
+  // The persisting variant is covered by the per-app override regression test.
+}
+
 TEST_CASE("Profile APIs", "[API]") {
   auto event_bus = std::make_shared<events::EventBusType>();
   auto running_sessions = std::make_shared<immer::atom<immer::vector<events::StreamSession>>>();

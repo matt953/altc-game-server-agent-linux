@@ -1,5 +1,5 @@
 use crate::auth::AdminUser;
-use crate::db::{shares, users, users::User};
+use crate::db::{games, shares, users, users::User};
 use crate::error::ApiError;
 use crate::state::AppState;
 use axum::{
@@ -16,22 +16,22 @@ pub struct ClientApp {
     pub icon: Option<String>,
 }
 
+// Served from our own library, not proxied from Wolf: SQLite is the source of
+// truth, and Wolf holds nothing when it has not been pushed to yet.
 pub async fn list(State(s): State<AppState>, user: User) -> Result<Json<Vec<ClientApp>>, ApiError> {
     let restricted = shares::restrictions(&s.pool).await?;
-    let apps = s
-        .wolf
-        .apps()
+    let apps = games::list(&s.pool)
         .await?
         .into_iter()
-        .filter(|a| match restricted.get(&a.id) {
+        .filter(|g| match restricted.get(&g.id) {
             Some(allowed) => user.is_admin() || allowed.contains(&user.id),
             None => true,
         })
-        .map(|a| ClientApp {
-            id: a.id,
-            title: a.title,
-            support_hdr: a.support_hdr,
-            icon: a.icon_png_path.filter(|p| !p.is_empty()),
+        .map(|g| ClientApp {
+            id: g.id,
+            title: g.title,
+            support_hdr: g.support_hdr,
+            icon: Some(g.icon_png_path).filter(|p| !p.is_empty()),
         })
         .collect();
     Ok(Json(apps))
@@ -61,7 +61,7 @@ pub async fn set_shares(
     Path(app_id): Path<String>,
     Json(u): Json<SharesUpdate>,
 ) -> Result<Json<Value>, ApiError> {
-    if !s.wolf.apps().await?.iter().any(|a| a.id == app_id) {
+    if !games::list(&s.pool).await?.iter().any(|g| g.id == app_id) {
         return Err(ApiError::not_found("no such app"));
     }
     for id in &u.user_ids {

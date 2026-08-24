@@ -178,4 +178,14 @@ void update_client_settings(const Config &cfg, std::size_t client_id, const Pair
  * Side effects: will save back the configuration to disk
  */
 void update_profiles(const Config &cfg, const ProfilesList &profiles);
+
+/**
+ * Replaces the currently loaded profiles WITHOUT writing to disk.
+ *
+ * The app library is owned by the altc agent, which pushes it on every
+ * connection. Persisting it here would leave a second copy that drifts from
+ * the agent's, and whose app ids are re-derived from the title on load.
+ * The config's apps are only ever a seed for the agent's first import.
+ */
+void update_profiles_in_memory(const Config &cfg, const ProfilesList &profiles);
 } // namespace state

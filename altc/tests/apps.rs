@@ -46,6 +46,11 @@ async fn setup(test: &str) -> (Router, String) {
     let id = db::users::insert(&pool, "owner", "owner").await.unwrap();
     let token = db::tokens::issue(&pool, id, "test").await.unwrap();
     let wolf = WolfClient::new(socket);
+    // The library is adopted from Wolf once, then owned by us: exercise the
+    // real import rather than seeding rows behind its back.
+    altc_api::library::import_if_empty(&pool, &wolf)
+        .await
+        .unwrap();
     (
         routes::router(AppState {
             pool,
@@ -269,13 +274,25 @@ async fn apps_trimmed_for_clients() {
     .await;
     assert_eq!(status, StatusCode::OK);
 
-    assert_eq!(body[0]["id"], "134906179");
-    assert_eq!(body[0]["title"], "Wolf UI");
-    assert_eq!(body[0]["support_hdr"], false);
-    assert_eq!(body[0]["icon"], "https://example.com/wolf_ui_icon.png");
+    // The library is ordered by title, not by whatever order Wolf held it in.
+    assert_eq!(titles(&body), vec!["Baldur\u{2019}s Gate 3", "Wolf UI"]);
 
-    assert_eq!(body[1]["title"], "Baldur’s Gate 3");
-    assert_eq!(body[1]["icon"], Value::Null);
+    let by_id = |id: &str| {
+        body.as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    let ui = by_id("134906179");
+    assert_eq!(ui["title"], "Wolf UI");
+    assert_eq!(ui["support_hdr"], false);
+    assert_eq!(ui["icon"], "https://example.com/wolf_ui_icon.png");
+
+    let bg3 = by_id("1354165435");
+    assert_eq!(bg3["title"], "Baldur\u{2019}s Gate 3");
+    assert_eq!(bg3["icon"], Value::Null);
 
     let raw = body.to_string();
     assert!(!raw.contains("pipeline"));

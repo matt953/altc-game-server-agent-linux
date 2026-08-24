@@ -5,6 +5,7 @@ use axum::{
 };
 use serde_json::json;
 
+#[derive(Debug)]
 pub struct ApiError(pub StatusCode, pub String);
 
 impl ApiError {
@@ -22,6 +23,9 @@ impl ApiError {
     }
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self(StatusCode::CONFLICT, msg.into())
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self(StatusCode::INTERNAL_SERVER_ERROR, msg.into())
     }
 }
 
