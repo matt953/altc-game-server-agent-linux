@@ -96,6 +96,17 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_protondb",
         "ALTER TABLE games ADD COLUMN protondb_tier TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // The Steam appid unlocks art, compatibility and store metadata. It is
+        // recorded with HOW it was found, because a title lookup is a guess
+        // where a GOG id or a umu GAMEID is exact.
+        "0006_steam_identity",
+        "ALTER TABLE games ADD COLUMN steam_appid TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN appid_source TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN tagline TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN developer TEXT NOT NULL DEFAULT '';
+         ALTER TABLE games ADD COLUMN genres TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {

@@ -1,5 +1,6 @@
 use crate::db::games::{self, EngineDefaults, Game};
 use crate::error::ApiError;
+use crate::metadata as md;
 use crate::wolf::WolfClient;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
@@ -55,6 +56,11 @@ fn game_from(app: &Value) -> Game {
         release_date: String::new(),
         description: String::new(),
         protondb_tier: String::new(),
+        steam_appid: String::new(),
+        appid_source: String::new(),
+        tagline: String::new(),
+        developer: String::new(),
+        genres: String::new(),
     }
 }
 
@@ -318,6 +324,11 @@ pub struct NewGame {
     pub icon: Option<String>,
     pub render_node: Option<String>,
     pub support_hdr: Option<bool>,
+    /// Optional. Unlocks Steam art, ProtonDB and store metadata. Usually
+    /// unnecessary: it is derived from the game's umu GAMEID or its title.
+    /// Supplied here it wins, because an admin correcting a bad match must be
+    /// able to.
+    pub steam_appid: Option<String>,
 }
 
 fn validate(new: &NewGame, lib: &crate::storage::Library) -> Result<(), ApiError> {
@@ -326,6 +337,15 @@ fn validate(new: &NewGame, lib: &crate::storage::Library) -> Result<(), ApiError
     }
     if new.image.trim().is_empty() {
         return Err(ApiError::bad_request("image is required"));
+    }
+    // Caught here rather than at lookup time: a bad appid would otherwise
+    // enrich the game with a different game's art and compatibility data.
+    if let Some(appid) = new.steam_appid.as_deref().map(str::trim) {
+        if !appid.is_empty() && !appid.chars().all(|c| c.is_ascii_digit()) {
+            return Err(ApiError::bad_request(
+                "steam_appid must be the numeric id from the store URL, e.g. 1086940",
+            ));
+        }
     }
     // A docker bind is "source:destination:mode". A colon anywhere in a path
     // shifts the fields and docker rejects the whole spec, which killed a
@@ -444,6 +464,14 @@ pub async fn create(
         release_date: String::new(),
         description: String::new(),
         protondb_tier: String::new(),
+        steam_appid: new.steam_appid.clone().unwrap_or_default(),
+        appid_source: match &new.steam_appid {
+            Some(v) if !v.trim().is_empty() => md::APPID_FROM_ADMIN.to_string(),
+            _ => String::new(),
+        },
+        tagline: String::new(),
+        developer: String::new(),
+        genres: String::new(),
     };
     games::upsert(pool, &game).await?;
     push(pool, wolf).await?;
@@ -502,10 +530,48 @@ pub async fn refresh_metadata(
 
     let mut meta = crate::metadata::fetch::lookup(source, &identity)?;
 
-    // Every Proton game already carries a Steam appid for protonfixes. It is
-    // an exact id obtained without a key or a title match, and Steam's box art
-    // is 600x900 against GOG's 342x482, so it goes first when present.
-    if let Some(appid) = crate::metadata::steam_appid_from_runner(&game.runner_json) {
+    // Precedence: what an admin set, then the appid umu already needs, then a
+    // title lookup. The first two are exact; the third is a guess, so it is
+    // only accepted on an exact title match and is recorded as a guess.
+    let resolved = if !game.steam_appid.is_empty() && game.appid_source == md::APPID_FROM_ADMIN {
+        Some((game.steam_appid.clone(), md::APPID_FROM_ADMIN))
+    } else if let Some(id) = md::steam_appid_from_runner(&game.runner_json) {
+        Some((id, md::APPID_FROM_GAMEID))
+    } else {
+        let lookup_title = if meta.title.is_empty() {
+            game.title.clone()
+        } else {
+            meta.title.clone()
+        };
+        source
+            .get_text(&md::steam_search_url(&lookup_title))
+            .ok()
+            .and_then(|b| md::parse_steam_search(&b, &lookup_title))
+            .map(|id| (id, md::APPID_FROM_TITLE))
+    };
+
+    if let Some((appid, how)) = resolved {
+        game.steam_appid = appid.clone();
+        game.appid_source = how.to_string();
+
+        // Steam has a real tagline, an accurate release date, genres and a
+        // developer — none of which GOG provides.
+        if let Some(det) = source
+            .get_text(&md::steam_appdetails_url(&appid))
+            .ok()
+            .and_then(|b| md::parse_steam_details(&b, &appid))
+        {
+            game.tagline = det.tagline;
+            game.developer = det.developer;
+            game.genres = det.genres;
+            if !det.release_date.is_empty() {
+                // GOG reports BG3 as 2020 (early access); Steam says 2023.
+                game.release_date = det.release_date;
+            }
+        }
+    }
+
+    if let Some(appid) = (!game.steam_appid.is_empty()).then(|| game.steam_appid.clone()) {
         let mut urls = crate::metadata::steam_art_urls(&appid);
         urls.extend(meta.art_urls.clone());
         meta.art_urls = urls;

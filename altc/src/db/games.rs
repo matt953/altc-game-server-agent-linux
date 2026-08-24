@@ -30,6 +30,13 @@ pub struct Game {
     pub description: String,
     /// ProtonDB tier: platinum/gold/silver/bronze/borked. Empty when unknown.
     pub protondb_tier: String,
+    /// Steam appid, and how it was arrived at: an admin's value, a umu GAMEID,
+    /// or a title lookup. The last is a guess and is labelled as one.
+    pub steam_appid: String,
+    pub appid_source: String,
+    pub tagline: String,
+    pub developer: String,
+    pub genres: String,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Game>, ApiError> {
@@ -51,8 +58,9 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
         "INSERT INTO games (id, title, support_hdr, icon_png_path, render_node, runner_json,
                             video_producer_buffer_caps, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
                             opus_gst_pipeline, start_audio_server, start_virtual_compositor,
-                            store, store_id, slug, release_date, description, protondb_tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            store, store_id, slug, release_date, description, protondb_tier,
+                            steam_appid, appid_source, tagline, developer, genres)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             support_hdr = excluded.support_hdr,
@@ -71,7 +79,12 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
             slug = excluded.slug,
             release_date = excluded.release_date,
             description = excluded.description,
-            protondb_tier = excluded.protondb_tier",
+            protondb_tier = excluded.protondb_tier,
+            steam_appid = excluded.steam_appid,
+            appid_source = excluded.appid_source,
+            tagline = excluded.tagline,
+            developer = excluded.developer,
+            genres = excluded.genres",
     )
     .bind(&g.id)
     .bind(&g.title)
@@ -92,6 +105,11 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     .bind(&g.release_date)
     .bind(&g.description)
     .bind(&g.protondb_tier)
+    .bind(&g.steam_appid)
+    .bind(&g.appid_source)
+    .bind(&g.tagline)
+    .bind(&g.developer)
+    .bind(&g.genres)
     .execute(pool)
     .await?;
     Ok(())

@@ -28,6 +28,14 @@ pub struct ClientApp {
     /// a user knows whether a game actually works before launching it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub protondb_tier: Option<String>,
+    /// A short blurb; Steam's short_description. GOG has no equivalent — its
+    /// "lead" is a duplicate of the full text, store banner included.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tagline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub developer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub genres: Option<String>,
 }
 
 /// A stored icon is either a URL the store gave us or a file we cached. Only
@@ -64,6 +72,9 @@ pub async fn list(State(s): State<AppState>, user: User) -> Result<Json<Vec<Clie
             release_date: blank_to_none(&g.release_date),
             store: blank_to_none(&g.store),
             protondb_tier: blank_to_none(&g.protondb_tier),
+            tagline: blank_to_none(&g.tagline),
+            developer: blank_to_none(&g.developer),
+            genres: blank_to_none(&g.genres),
             id: g.id,
             title: g.title,
             support_hdr: g.support_hdr,
@@ -244,6 +255,11 @@ pub async fn refresh(
         "release_date": game.release_date,
         "description": game.description,
         "protondb_tier": game.protondb_tier,
+        "steam_appid": game.steam_appid,
+        "appid_source": game.appid_source,
+        "tagline": game.tagline,
+        "developer": game.developer,
+        "genres": game.genres,
         "has_art": !game.icon_png_path.is_empty(),
     })))
 }

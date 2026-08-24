@@ -241,6 +241,11 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
             release_date: String::new(),
             description: String::new(),
             protondb_tier: String::new(),
+            steam_appid: String::new(),
+            appid_source: String::new(),
+            tagline: String::new(),
+            developer: String::new(),
+            genres: String::new(),
         },
     )
     .await
@@ -285,6 +290,11 @@ async fn backfill_completes_old_rows_and_keeps_overrides() {
                 release_date: String::new(),
                 description: String::new(),
                 protondb_tier: String::new(),
+                steam_appid: String::new(),
+                appid_source: String::new(),
+                tagline: String::new(),
+                developer: String::new(),
+                genres: String::new(),
             },
         )
         .await
@@ -341,6 +351,11 @@ async fn backfill_keeps_a_game_wolf_does_not_know() {
             release_date: String::new(),
             description: String::new(),
             protondb_tier: String::new(),
+            steam_appid: String::new(),
+            appid_source: String::new(),
+            tagline: String::new(),
+            developer: String::new(),
+            genres: String::new(),
         },
     )
     .await
@@ -436,6 +451,11 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
                 release_date: String::new(),
                 description: String::new(),
                 protondb_tier: String::new(),
+                steam_appid: String::new(),
+                appid_source: String::new(),
+                tagline: String::new(),
+                developer: String::new(),
+                genres: String::new(),
             },
         )
         .await
@@ -669,4 +689,39 @@ async fn creating_without_library_roots_is_refused_not_silently_unvalidated() {
         .await
         .unwrap_err();
     assert!(err.1.contains("ALTC_LIBRARY_ROOTS"), "got: {}", err.1);
+}
+
+// A bad appid must be caught before it reaches Steam, and before a game is
+// created that would then be enriched with the wrong game's data.
+#[tokio::test]
+async fn a_non_numeric_steam_appid_is_refused() {
+    let (pool, wolf, apps, lib, root) = seeded("m4-badappid").await;
+    let mut body = valid_new(&root);
+    body["steam_appid"] = json!("not-an-id");
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("numeric"), "got: {}", err.1);
+    assert_eq!(apps.lock().unwrap().len(), 1, "nothing may be created");
+}
+
+#[tokio::test]
+async fn an_admin_supplied_appid_is_recorded_as_the_admins() {
+    let (pool, wolf, _apps, lib, root) = seeded("m4-adminappid").await;
+    let mut body = valid_new(&root);
+    body["steam_appid"] = json!("1086940");
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let game = library::create(&pool, &wolf, &lib, new).await.unwrap();
+    assert_eq!(game.steam_appid, "1086940");
+    // Recorded as exact, so a later title lookup never overrides it.
+    assert_eq!(game.appid_source, "admin");
+}
+
+#[tokio::test]
+async fn an_omitted_appid_leaves_the_field_open_for_discovery() {
+    let (pool, wolf, _apps, lib, root) = seeded("m4-noappid").await;
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    let game = library::create(&pool, &wolf, &lib, new).await.unwrap();
+    assert!(game.steam_appid.is_empty());
+    assert!(game.appid_source.is_empty());
 }

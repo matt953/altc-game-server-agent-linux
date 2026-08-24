@@ -56,7 +56,22 @@ pub fn html_to_text(html: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&nbsp;", " ");
-    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+    let collapsed = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Tags become spaces, so `<b>D&D</b>.` would read "D&D ." — close the gap
+    // rather than leaving one in front of every full stop.
+    let mut out = String::with_capacity(collapsed.len());
+    let mut chars = collapsed.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ' '
+            && chars
+                .peek()
+                .is_some_and(|n| matches!(n, '.' | ',' | '!' | '?' | ';' | ':' | ')' | ']'))
+        {
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }
 
 pub fn parse_gog(body: &str) -> Result<Metadata, ApiError> {
@@ -314,6 +329,12 @@ mod html_tests {
     }
 
     #[test]
+    fn a_tag_before_punctuation_does_not_leave_a_gap() {
+        assert_eq!(html_to_text("set in <b>D&amp;D</b>."), "set in D&D.");
+        assert_eq!(html_to_text("<i>one</i>, <i>two</i>!"), "one, two!");
+    }
+
+    #[test]
     fn entities_are_decoded_and_whitespace_collapsed() {
         assert_eq!(html_to_text("A &amp; B\n\n  C"), "A & B C");
     }
@@ -328,5 +349,201 @@ mod html_tests {
     fn a_short_lead_is_still_the_lead() {
         let body = r#"{"description":{"lead":"Wolfenstein returns.","full":"<p>Long.</p>"}}"#;
         assert_eq!(parse_gog(body).unwrap().description, "Wolfenstein returns.");
+    }
+}
+
+/// How a Steam appid was arrived at. Worth recording: everything else in the
+/// chain is exact (a GOG id read from disk, an appid umu already needed), but
+/// a title lookup is a guess, and a guess should be visible as one.
+pub const APPID_FROM_ADMIN: &str = "admin";
+pub const APPID_FROM_GAMEID: &str = "gameid";
+pub const APPID_FROM_TITLE: &str = "title-match";
+
+pub fn steam_search_url(title: &str) -> String {
+    // Steam's community search; keyless. Encode enough that titles with
+    // spaces, colons and apostrophes survive.
+    let encoded: String = title
+        .chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
+            other => other
+                .to_string()
+                .bytes()
+                .map(|b| format!("%{b:02X}"))
+                .collect(),
+        })
+        .collect();
+    format!("https://steamcommunity.com/actions/SearchApps/{encoded}")
+}
+
+/// Only an exact title match counts. Taking the top hit blindly picks the
+/// wrong game as soon as a title has sequels or remasters — "Wolfenstein: The
+/// New Order" returns six results, and being first is not the same as being
+/// right.
+pub fn parse_steam_search(body: &str, wanted_title: &str) -> Option<String> {
+    let results: serde_json::Value = serde_json::from_str(body).ok()?;
+    let wanted = wanted_title.trim().to_lowercase();
+    for entry in results.as_array()? {
+        let name = entry["name"].as_str()?.trim().to_lowercase();
+        if name == wanted {
+            return entry["appid"].as_str().map(String::from);
+        }
+    }
+    None
+}
+
+pub fn steam_appdetails_url(appid: &str) -> String {
+    format!("https://store.steampowered.com/api/appdetails?appids={appid}&l=english")
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SteamDetails {
+    pub tagline: String,
+    pub release_date: String,
+    pub developer: String,
+    pub genres: String,
+}
+
+/// Steam prints dates for humans ("3 Aug, 2023"). GOG gives ISO. A field that
+/// is sometimes one and sometimes the other is worse than either, so Steam's
+/// is normalised on the way in.
+pub fn iso_date(display: &str) -> String {
+    let cleaned = display.replace(',', "");
+    let parts: Vec<&str> = cleaned.split_whitespace().collect();
+    let month = |m: &str| -> Option<&'static str> {
+        Some(match &m.to_lowercase()[..3.min(m.len())] {
+            "jan" => "01",
+            "feb" => "02",
+            "mar" => "03",
+            "apr" => "04",
+            "may" => "05",
+            "jun" => "06",
+            "jul" => "07",
+            "aug" => "08",
+            "sep" => "09",
+            "oct" => "10",
+            "nov" => "11",
+            "dec" => "12",
+            _ => return None,
+        })
+    };
+    match parts.as_slice() {
+        // "3 Aug 2023"
+        [d, m, y] if d.parse::<u32>().is_ok() => match month(m) {
+            Some(mm) => format!("{y}-{mm}-{:02}", d.parse::<u32>().unwrap_or(1)),
+            None => display.to_string(),
+        },
+        // "Aug 3 2023"
+        [m, d, y] if d.parse::<u32>().is_ok() => match month(m) {
+            Some(mm) => format!("{y}-{mm}-{:02}", d.parse::<u32>().unwrap_or(1)),
+            None => display.to_string(),
+        },
+        _ => display.to_string(),
+    }
+}
+
+pub fn parse_steam_details(body: &str, appid: &str) -> Option<SteamDetails> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let entry = &v[appid];
+    if entry["success"] != serde_json::Value::Bool(true) {
+        return None;
+    }
+    let d = &entry["data"];
+    let join = |key: &str, field: &str| -> String {
+        d[key]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x[field].as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default()
+    };
+    Some(SteamDetails {
+        tagline: html_to_text(d["short_description"].as_str().unwrap_or_default()),
+        release_date: iso_date(d["release_date"]["date"].as_str().unwrap_or_default()),
+        developer: d["developers"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        genres: join("genres", "description"),
+    })
+}
+
+#[cfg(test)]
+mod steam_tests {
+    use super::*;
+
+    // The real shape from steamcommunity.com/actions/SearchApps, 2026-08-24.
+    const SEARCH: &str = r#"[
+        {"appid":"201810","name":"Wolfenstein: The New Order"},
+        {"appid":"201790","name":"Wolfenstein: The Old Blood"}
+    ]"#;
+
+    #[test]
+    fn an_exact_title_resolves_to_its_appid() {
+        assert_eq!(
+            parse_steam_search(SEARCH, "Wolfenstein: The New Order").as_deref(),
+            Some("201810")
+        );
+    }
+
+    #[test]
+    fn matching_ignores_case_and_surrounding_space() {
+        assert_eq!(
+            parse_steam_search(SEARCH, "  wolfenstein: the new order ").as_deref(),
+            Some("201810")
+        );
+    }
+
+    #[test]
+    fn a_near_miss_is_not_accepted_just_because_it_is_first() {
+        // The whole point: "first result" and "right result" are different.
+        assert!(parse_steam_search(SEARCH, "Wolfenstein").is_none());
+        assert!(parse_steam_search(SEARCH, "Wolfenstein: The New Colossus").is_none());
+    }
+
+    #[test]
+    fn no_results_is_not_a_match() {
+        assert!(parse_steam_search("[]", "Anything").is_none());
+    }
+
+    #[test]
+    fn a_title_with_punctuation_survives_the_url() {
+        let url = steam_search_url("Baldur's Gate 3");
+        assert!(!url.contains(' '), "got {url}");
+        assert!(url.contains("Baldur") && url.contains("%27"), "got {url}");
+    }
+
+    #[test]
+    fn steam_dates_are_normalised_to_iso() {
+        assert_eq!(iso_date("3 Aug, 2023"), "2023-08-03");
+        assert_eq!(iso_date("19 May, 2014"), "2014-05-19");
+        assert_eq!(iso_date("Aug 3, 2023"), "2023-08-03");
+        // Anything unrecognised is passed through rather than mangled.
+        assert_eq!(iso_date("Coming soon"), "Coming soon");
+    }
+
+    #[test]
+    fn reads_the_fields_gog_does_not_have() {
+        let body = r#"{"1086940":{"success":true,"data":{
+            "short_description":"A story-rich, party-based RPG set in <b>D&amp;D</b>.",
+            "release_date":{"coming_soon":false,"date":"3 Aug, 2023"},
+            "developers":["Larian Studios"],
+            "genres":[{"description":"Adventure"},{"description":"RPG"}]
+        }}}"#;
+        let d = parse_steam_details(body, "1086940").unwrap();
+        assert_eq!(d.tagline, "A story-rich, party-based RPG set in D&D.");
+        assert_eq!(d.release_date, "2023-08-03");
+        assert_eq!(d.developer, "Larian Studios");
+        assert_eq!(d.genres, "Adventure, RPG");
+    }
+
+    #[test]
+    fn an_unsuccessful_lookup_is_not_a_blank_record() {
+        assert!(parse_steam_details(r#"{"1":{"success":false}}"#, "1").is_none());
     }
 }
