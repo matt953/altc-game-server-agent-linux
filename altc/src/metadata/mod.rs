@@ -57,6 +57,21 @@ pub fn gog_product_url(store_id: &str) -> String {
     format!("https://api.gog.com/products/{store_id}?expand=description")
 }
 
+/// v2 is the only GOG endpoint that exposes real box art. v1's `images.logo2x`
+/// is a 200x120 landscape logo — fine in a store listing, useless as a tile.
+/// Verified 2026-08-24: v2 boxArtImage is 342x482 portrait for all three games
+/// on the NAS.
+pub fn gog_boxart_url(store_id: &str) -> String {
+    format!("https://api.gog.com/v2/games/{store_id}")
+}
+
+pub fn parse_gog_boxart(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    v["_links"]["boxArtImage"]["href"]
+        .as_str()
+        .map(String::from)
+}
+
 /// Steam publishes portrait box art with no key and no lookup, which is the
 /// right shape for a tile where GOG's landscape logo is not.
 pub fn steam_art_urls(appid: &str) -> Vec<String> {

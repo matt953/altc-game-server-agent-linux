@@ -1,4 +1,7 @@
-use super::{Metadata, art_urls_for, extension_for, gog_product_url, parse_gog};
+use super::{
+    Metadata, art_urls_for, extension_for, gog_boxart_url, gog_product_url, parse_gog,
+    parse_gog_boxart,
+};
 use crate::error::ApiError;
 use crate::identity::Identity;
 use std::path::{Path, PathBuf};
@@ -76,7 +79,21 @@ pub fn lookup(source: &dyn Source, identity: &Identity) -> Result<Metadata, ApiE
     match identity.store {
         "gog" => {
             let body = source.get_text(&gog_product_url(&identity.store_id))?;
-            parse_gog(&body)
+            let mut meta = parse_gog(&body)?;
+            // Box art lives only on v2. Failing to get it must not lose the
+            // metadata we already have, so the logo stays as a fallback.
+            match source
+                .get_text(&gog_boxart_url(&identity.store_id))
+                .ok()
+                .and_then(|b| parse_gog_boxart(&b))
+            {
+                Some(box_art) => meta.art_urls.insert(0, box_art),
+                None => tracing::warn!(
+                    "metadata: no box art for gog {}; falling back to the logo",
+                    identity.store_id
+                ),
+            }
+            Ok(meta)
         }
         // Steam art needs no lookup at all; the appid is the key.
         "steam" => Ok(Metadata {
@@ -160,6 +177,42 @@ mod tests {
             store_id: "1943729964".into(),
             title: "Wolfenstein: The New Order".into(),
         }
+    }
+
+    #[test]
+    fn prefers_real_box_art_over_the_store_logo() {
+        // v1 gives a 200x120 landscape logo; v2 gives 342x482 portrait art.
+        let fake = Fake {
+            text: HashMap::from([
+                (
+                    gog_product_url("1943729964"),
+                    r#"{"title":"W","images":{"logo2x":"//x/logo_2x.jpg"}}"#.to_string(),
+                ),
+                (
+                    gog_boxart_url("1943729964"),
+                    r#"{"_links":{"boxArtImage":{"href":"https://x/box.jpg"}}}"#.to_string(),
+                ),
+            ]),
+            bytes: HashMap::new(),
+        };
+        let meta = lookup(&fake, &gog_identity()).unwrap();
+        assert_eq!(meta.art_urls[0], "https://x/box.jpg");
+        // The logo is kept behind it, not discarded.
+        assert!(meta.art_urls.iter().any(|u| u.contains("logo")));
+    }
+
+    #[test]
+    fn missing_box_art_keeps_the_metadata_and_the_logo() {
+        let fake = Fake {
+            text: HashMap::from([(
+                gog_product_url("1943729964"),
+                r#"{"title":"W","images":{"logo2x":"//x/logo_2x.jpg"}}"#.to_string(),
+            )]),
+            bytes: HashMap::new(),
+        };
+        let meta = lookup(&fake, &gog_identity()).unwrap();
+        assert_eq!(meta.title, "W");
+        assert_eq!(meta.art_urls[0], "https://x/logo_2x.jpg");
     }
 
     #[test]
