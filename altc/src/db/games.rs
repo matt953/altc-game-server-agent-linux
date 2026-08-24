@@ -85,6 +85,11 @@ pub struct EngineDefaults {
     pub opus_gst_pipeline: String,
     pub start_audio_server: bool,
     pub start_virtual_compositor: bool,
+    pub video_producer_buffer_caps: String,
+    pub render_node: String,
+    /// The HostConfig blob every docker runner needs; identical across our
+    /// games, so it is inherited rather than asked for on every add.
+    pub runner_base_create_json: String,
 }
 
 pub async fn engine_defaults(pool: &SqlitePool) -> Result<Option<EngineDefaults>, ApiError> {
@@ -99,15 +104,19 @@ pub async fn set_engine_defaults(pool: &SqlitePool, d: &EngineDefaults) -> Resul
     sqlx::query(
         "INSERT INTO engine_defaults
             (id, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
-             opus_gst_pipeline, start_audio_server, start_virtual_compositor)
-         VALUES (1, ?, ?, ?, ?, ?, ?)
+             opus_gst_pipeline, start_audio_server, start_virtual_compositor,
+             video_producer_buffer_caps, render_node, runner_base_create_json)
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             h264_gst_pipeline = excluded.h264_gst_pipeline,
             hevc_gst_pipeline = excluded.hevc_gst_pipeline,
             av1_gst_pipeline = excluded.av1_gst_pipeline,
             opus_gst_pipeline = excluded.opus_gst_pipeline,
             start_audio_server = excluded.start_audio_server,
-            start_virtual_compositor = excluded.start_virtual_compositor",
+            start_virtual_compositor = excluded.start_virtual_compositor,
+            video_producer_buffer_caps = excluded.video_producer_buffer_caps,
+            render_node = excluded.render_node,
+            runner_base_create_json = excluded.runner_base_create_json",
     )
     .bind(&d.h264_gst_pipeline)
     .bind(&d.hevc_gst_pipeline)
@@ -115,6 +124,9 @@ pub async fn set_engine_defaults(pool: &SqlitePool, d: &EngineDefaults) -> Resul
     .bind(&d.opus_gst_pipeline)
     .bind(d.start_audio_server)
     .bind(d.start_virtual_compositor)
+    .bind(&d.video_producer_buffer_caps)
+    .bind(&d.render_node)
+    .bind(&d.runner_base_create_json)
     .execute(pool)
     .await?;
     Ok(())
@@ -157,5 +169,26 @@ pub async fn rename(pool: &SqlitePool, id: &str, title: &str, icon: &str) -> Res
     if changed == 0 {
         return Err(ApiError::not_found("no such game"));
     }
+    Ok(())
+}
+
+/// Removes the game and any per-user shares pointing at it. Shares are keyed
+/// by app id with no foreign key to games, so without this they would linger
+/// and silently re-attach if the id were ever reused.
+pub async fn delete(pool: &SqlitePool, id: &str) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await?;
+    let removed = sqlx::query("DELETE FROM games WHERE id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(ApiError::not_found("no such game"));
+    }
+    sqlx::query("DELETE FROM app_shares WHERE app_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }

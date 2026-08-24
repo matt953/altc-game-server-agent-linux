@@ -81,3 +81,78 @@ pub async fn set_shares(
         "user_ids": u.user_ids,
     })))
 }
+
+#[derive(serde::Serialize)]
+pub struct AdminApp {
+    pub id: String,
+    pub title: String,
+    pub support_hdr: bool,
+    pub icon: Option<String>,
+}
+
+impl From<crate::db::games::Game> for AdminApp {
+    fn from(g: crate::db::games::Game) -> Self {
+        Self {
+            id: g.id,
+            title: g.title,
+            support_hdr: g.support_hdr,
+            icon: Some(g.icon_png_path).filter(|p| !p.is_empty()),
+        }
+    }
+}
+
+pub async fn create(
+    State(s): State<AppState>,
+    AdminUser(actor): AdminUser,
+    Json(new): Json<crate::library::NewGame>,
+) -> Result<(axum::http::StatusCode, Json<AdminApp>), ApiError> {
+    let game = crate::library::create(&s.pool, &s.wolf, new).await?;
+    tracing::info!("app '{}' added by '{}'", game.title, actor.name);
+    Ok((axum::http::StatusCode::CREATED, Json(game.into())))
+}
+
+#[derive(serde::Deserialize)]
+pub struct AppEdit {
+    title: Option<String>,
+    icon: Option<String>,
+}
+
+/// Title and art only. The id is never editable: shares and every client's
+/// cached library are keyed by it.
+pub async fn update(
+    State(s): State<AppState>,
+    AdminUser(actor): AdminUser,
+    Path(app_id): Path<String>,
+    Json(edit): Json<AppEdit>,
+) -> Result<Json<AdminApp>, ApiError> {
+    let current = games::list(&s.pool)
+        .await?
+        .into_iter()
+        .find(|g| g.id == app_id)
+        .ok_or_else(|| ApiError::not_found("no such app"))?;
+    let title = edit.title.unwrap_or_else(|| current.title.clone());
+    if title.trim().is_empty() {
+        return Err(ApiError::bad_request("title cannot be empty"));
+    }
+    let icon = edit.icon.unwrap_or_else(|| current.icon_png_path.clone());
+    games::rename(&s.pool, &app_id, title.trim(), &icon).await?;
+    crate::library::push(&s.pool, &s.wolf).await?;
+    tracing::info!("app '{}' edited by '{}'", title.trim(), actor.name);
+
+    let updated = games::list(&s.pool)
+        .await?
+        .into_iter()
+        .find(|g| g.id == app_id)
+        .ok_or_else(|| ApiError::not_found("no such app"))?;
+    Ok(Json(updated.into()))
+}
+
+pub async fn delete(
+    State(s): State<AppState>,
+    AdminUser(actor): AdminUser,
+    Path(app_id): Path<String>,
+) -> Result<axum::http::StatusCode, ApiError> {
+    crate::library::remove(&s.pool, &s.wolf, &app_id).await?;
+    tracing::info!("app {app_id} deleted by '{}'", actor.name);
+    Ok(axum::http::StatusCode::NO_CONTENT)
+}

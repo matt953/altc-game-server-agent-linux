@@ -59,6 +59,12 @@ fn defaults_from(app: &Value) -> EngineDefaults {
         opus_gst_pipeline: s("opus_gst_pipeline"),
         start_audio_server: app["start_audio_server"].as_bool().unwrap_or(true),
         start_virtual_compositor: app["start_virtual_compositor"].as_bool().unwrap_or(true),
+        video_producer_buffer_caps: s("video_producer_buffer_caps"),
+        render_node: s("render_node"),
+        runner_base_create_json: app["runner"]["base_create_json"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
     }
 }
 
@@ -87,6 +93,27 @@ pub async fn backfill_engine_config(
             Some((id, a))
         })
         .collect();
+
+    // The template a new game inherits was seeded before it had these
+    // columns; complete it from the same source, or M3 creates unlaunchable
+    // games with empty producer caps.
+    if let Some(d) = games::engine_defaults(pool).await? {
+        if d.video_producer_buffer_caps.is_empty() || d.runner_base_create_json.is_empty() {
+            if let Some(app) = from_wolf.values().find(|a| {
+                !a["video_producer_buffer_caps"]
+                    .as_str()
+                    .unwrap_or("")
+                    .is_empty()
+                    && a["runner"]["type"] == json!("docker")
+            }) {
+                games::set_engine_defaults(pool, &defaults_from(app)).await?;
+                tracing::info!(
+                    "library: completed the new-game template from '{}'",
+                    app["title"]
+                );
+            }
+        }
+    }
 
     let mut healed = 0;
     for g in stale {
@@ -261,4 +288,112 @@ mod tests {
         games::upsert(&pool, &game_from(&app)).await.unwrap();
         assert_eq!(games::count(&pool).await.unwrap(), 1);
     }
+}
+
+/// A game as an admin supplies it. Engine config is never accepted here: it is
+/// inherited from the template, because it belongs to the encoder, not to a
+/// game, and an admin has no way to know a correct value for it.
+#[derive(serde::Deserialize)]
+pub struct NewGame {
+    pub title: String,
+    pub image: String,
+    #[serde(default)]
+    pub mounts: Vec<String>,
+    #[serde(default)]
+    pub env: Vec<String>,
+    pub icon: Option<String>,
+    pub render_node: Option<String>,
+    pub support_hdr: Option<bool>,
+}
+
+fn validate(new: &NewGame) -> Result<(), ApiError> {
+    if new.title.trim().is_empty() {
+        return Err(ApiError::bad_request("title is required"));
+    }
+    if new.image.trim().is_empty() {
+        return Err(ApiError::bad_request("image is required"));
+    }
+    // A docker bind is "source:destination:mode". A colon anywhere in a path
+    // shifts the fields and docker rejects the whole spec, which killed a
+    // launch before any container existed (2026-08-24).
+    for m in &new.mounts {
+        let parts: Vec<&str> = m.split(':').collect();
+        if parts.len() != 3 || parts[0].is_empty() || parts[1].is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "mount '{m}' must be source:destination:mode with no ':' in either path"
+            )));
+        }
+        if !parts[0].starts_with('/') || !parts[1].starts_with('/') {
+            return Err(ApiError::bad_request(format!(
+                "mount '{m}' needs absolute paths"
+            )));
+        }
+    }
+    if !new.env.iter().any(|e| e.starts_with("RUN_EXE=")) {
+        return Err(ApiError::bad_request(
+            "env must contain RUN_EXE=<path to the executable inside the container>",
+        ));
+    }
+    Ok(())
+}
+
+pub async fn create(pool: &SqlitePool, wolf: &WolfClient, new: NewGame) -> Result<Game, ApiError> {
+    validate(&new)?;
+    let existing = games::list(pool).await?;
+    if existing
+        .iter()
+        .any(|g| g.title.eq_ignore_ascii_case(new.title.trim()))
+    {
+        return Err(ApiError::conflict(format!(
+            "a game called '{}' already exists",
+            new.title.trim()
+        )));
+    }
+    let Some(d) = games::engine_defaults(pool).await? else {
+        return Err(ApiError::internal(
+            "no template to build a game from; the agent has not imported from wolf yet",
+        ));
+    };
+    if d.video_producer_buffer_caps.is_empty() {
+        return Err(ApiError::internal(
+            "the new-game template has no video_producer_buffer_caps; a game built from it could not launch",
+        ));
+    }
+
+    let game = Game {
+        id: games::allocate_id(pool).await?,
+        title: new.title.trim().to_string(),
+        support_hdr: new.support_hdr.unwrap_or(false),
+        icon_png_path: new.icon.unwrap_or_default(),
+        render_node: new.render_node.unwrap_or_else(|| d.render_node.clone()),
+        runner_json: json!({
+            "type": "docker",
+            "name": new.title.trim().replace(|c: char| !c.is_alphanumeric(), ""),
+            "image": new.image.trim(),
+            "mounts": new.mounts,
+            "env": new.env,
+            "devices": [],
+            "ports": [],
+            "base_create_json": d.runner_base_create_json,
+        })
+        .to_string(),
+        video_producer_buffer_caps: d.video_producer_buffer_caps.clone(),
+        h264_gst_pipeline: d.h264_gst_pipeline.clone(),
+        hevc_gst_pipeline: d.hevc_gst_pipeline.clone(),
+        av1_gst_pipeline: d.av1_gst_pipeline.clone(),
+        opus_gst_pipeline: d.opus_gst_pipeline.clone(),
+        start_audio_server: d.start_audio_server,
+        start_virtual_compositor: d.start_virtual_compositor,
+    };
+    games::upsert(pool, &game).await?;
+    push(pool, wolf).await?;
+    tracing::info!("library: added '{}' ({})", game.title, game.id);
+    Ok(game)
+}
+
+pub async fn remove(pool: &SqlitePool, wolf: &WolfClient, id: &str) -> Result<(), ApiError> {
+    games::delete(pool, id).await?;
+    push(pool, wolf).await?;
+    tracing::info!("library: removed game {id}");
+    Ok(())
 }

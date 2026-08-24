@@ -70,6 +70,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
          ALTER TABLE games ADD COLUMN start_virtual_compositor BOOLEAN NOT NULL DEFAULT 1;
          ALTER TABLE engine_defaults ADD COLUMN video_producer_buffer_caps TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // What a game created over the API inherits. Without these a new game
+        // gets empty producer caps and no HostConfig, which is precisely the
+        // unlaunchable state fixed in 0002.
+        "0003_new_game_template",
+        "ALTER TABLE engine_defaults ADD COLUMN render_node TEXT NOT NULL DEFAULT '';
+         ALTER TABLE engine_defaults ADD COLUMN runner_base_create_json TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {

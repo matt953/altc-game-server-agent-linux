@@ -417,3 +417,119 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
         .unwrap();
     }
 }
+
+fn valid_new() -> serde_json::Value {
+    json!({
+        "title": "Doom Eternal",
+        "image": "ghcr.io/matt953/wolf-runner:v7",
+        "mounts": ["/mnt/games/doom:/games/doom:rw"],
+        "env": ["RUN_EXE=/games/doom/DOOMEternalx64vk.exe", "GAMEID=umu-782330"],
+    })
+}
+
+// Each test needs its own socket: they run in parallel and would otherwise
+// bind the same path and race.
+async fn seeded(name: &str) -> (sqlx::SqlitePool, WolfClient, Apps) {
+    let pool = db::init_memory().await;
+    let (wolf, apps) = start(name, vec![seed_app("1", "Seed")]).await;
+    library::import_if_empty(&pool, &wolf).await.unwrap();
+    library::backfill_engine_config(&pool, &wolf).await.unwrap();
+    (pool, wolf, apps)
+}
+
+#[tokio::test]
+async fn a_game_added_over_the_api_reaches_wolf_launchable() {
+    let (pool, wolf, apps) = seeded("m3-add").await;
+    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
+    let game = library::create(&pool, &wolf, new).await.unwrap();
+
+    let pushed = apps.lock().unwrap().clone();
+    let added = pushed
+        .iter()
+        .find(|a| a["title"] == json!("Doom Eternal"))
+        .unwrap();
+    assert_eq!(added["id"], json!(game.id));
+    // Inherited from the template: an admin cannot know these, and an empty
+    // producer caps is the difference between launching and not.
+    assert_eq!(
+        added["video_producer_buffer_caps"],
+        "video/x-raw, format=NV12"
+    );
+    assert_eq!(added["hevc_gst_pipeline"], "hevc-template");
+    assert_eq!(added["runner"]["image"], "ghcr.io/matt953/wolf-runner:v7");
+    assert_eq!(
+        added["runner"]["env"][0],
+        "RUN_EXE=/games/doom/DOOMEternalx64vk.exe"
+    );
+    // Allocated, not derived from the title.
+    assert_ne!(game.id, "1");
+}
+
+#[tokio::test]
+async fn a_colon_in_a_mount_path_is_refused() {
+    let (pool, wolf, apps) = seeded("m3-colon").await;
+    let mut body = valid_new();
+    body["mounts"] = json!(["/mnt/games/Wolfenstein: The New Order:/games/w:rw"]);
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, new).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("source:destination:mode"), "got: {}", err.1);
+    assert_eq!(apps.lock().unwrap().len(), 1, "nothing may be pushed");
+}
+
+#[tokio::test]
+async fn a_game_without_run_exe_is_refused() {
+    let (pool, wolf, _apps) = seeded("m3-runexe").await;
+    let mut body = valid_new();
+    body["env"] = json!(["GAMEID=umu-1"]);
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, new).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("RUN_EXE"));
+}
+
+#[tokio::test]
+async fn a_duplicate_title_is_refused() {
+    let (pool, wolf, _apps) = seeded("m3-dup").await;
+    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
+    library::create(&pool, &wolf, new).await.unwrap();
+    let again: library::NewGame = serde_json::from_value(valid_new()).unwrap();
+    let err = library::create(&pool, &wolf, again).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn deleting_a_game_removes_it_from_wolf_and_drops_its_shares() {
+    let (pool, wolf, apps) = seeded("m3-delete").await;
+    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
+    let game = library::create(&pool, &wolf, new).await.unwrap();
+    let uid = db::users::insert(&pool, "dave", "member").await.unwrap();
+    db::shares::set_for_app(&pool, &game.id, &[uid])
+        .await
+        .unwrap();
+
+    library::remove(&pool, &wolf, &game.id).await.unwrap();
+
+    assert!(
+        !apps
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|a| a["id"] == json!(game.id))
+    );
+    assert!(
+        db::games::list(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .all(|g| g.id != game.id)
+    );
+    // Shares have no foreign key to games, so they must be cleaned explicitly
+    // or they would re-attach if the id were ever reused.
+    assert!(
+        db::shares::for_app(&pool, &game.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
