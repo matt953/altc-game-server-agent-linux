@@ -310,3 +310,14 @@ async fn apps_require_auth() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn shares_for_an_unknown_app_are_a_404_not_everyone() {
+    let (app, owner) = setup("shares_unknown").await;
+    let (status, _) = send(
+        &app,
+        authed("GET", "/api/v1/apps/does-not-exist/shares", &owner, ""),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

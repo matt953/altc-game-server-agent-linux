@@ -42,6 +42,11 @@ pub async fn get_shares(
     _admin: AdminUser,
     Path(app_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    // Without this a deleted game answers "shared with everyone", which reads
+    // to a UI as a real game that everyone can see.
+    if !games::list(&s.pool).await?.iter().any(|g| g.id == app_id) {
+        return Err(ApiError::not_found("no such app"));
+    }
     let user_ids = shares::for_app(&s.pool, &app_id).await?;
     Ok(Json(json!({
         "app_id": app_id,
