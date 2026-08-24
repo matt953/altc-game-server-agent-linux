@@ -81,7 +81,13 @@ pub async fn backfill_engine_config(
         .into_iter()
         .filter(|g| g.hevc_gst_pipeline.is_empty() || g.video_producer_buffer_caps.is_empty())
         .collect();
-    if stale.is_empty() {
+    let template_incomplete = games::engine_defaults(pool).await?.is_none_or(|d| {
+        d.video_producer_buffer_caps.is_empty() || d.runner_base_create_json.is_empty()
+    });
+    // The template needs completing even when every game is already healthy:
+    // it gained columns of its own, and a game created from an incomplete one
+    // cannot launch (found in the field 2026-08-24, M3 create refused).
+    if stale.is_empty() && !template_incomplete {
         return Ok(0);
     }
     let from_wolf: std::collections::HashMap<String, Value> = wolf
@@ -97,8 +103,8 @@ pub async fn backfill_engine_config(
     // The template a new game inherits was seeded before it had these
     // columns; complete it from the same source, or M3 creates unlaunchable
     // games with empty producer caps.
-    if let Some(d) = games::engine_defaults(pool).await? {
-        if d.video_producer_buffer_caps.is_empty() || d.runner_base_create_json.is_empty() {
+    if template_incomplete {
+        {
             if let Some(app) = from_wolf.values().find(|a| {
                 !a["video_producer_buffer_caps"]
                     .as_str()

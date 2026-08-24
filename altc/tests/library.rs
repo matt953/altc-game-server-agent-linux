@@ -67,7 +67,8 @@ fn seed_app(id: &str, title: &str) -> Value {
         "video_producer_buffer_caps": "video/x-raw, format=NV12",
         "start_virtual_compositor": true, "start_audio_server": true,
         "runner": {"type": "docker", "image": "ghcr.io/matt953/wolf-runner:v7",
-                   "mounts": ["/games/bg3:/games/bg3:rw"], "env": ["RUN_EXE=/games/bg3/bg3.exe"]},
+                   "mounts": ["/games/bg3:/games/bg3:rw"], "env": ["RUN_EXE=/games/bg3/bg3.exe"],
+                   "base_create_json": "{\"HostConfig\":{\"IpcMode\":\"host\"}}"},
     })
 }
 
@@ -532,4 +533,40 @@ async fn deleting_a_game_removes_it_from_wolf_and_drops_its_shares() {
             .unwrap()
             .is_empty()
     );
+}
+
+// Field-found 2026-08-24: the template completion sat behind an early return
+// that fires when no game is stale, so on a healthy library it never ran and
+// M3's create refused with "template has no video_producer_buffer_caps".
+#[tokio::test]
+async fn the_new_game_template_is_completed_even_when_no_game_is_stale() {
+    let pool = db::init_memory().await;
+    let (wolf, _apps) = start("m3-template", vec![seed_app("1", "Seed")]).await;
+    library::import_if_empty(&pool, &wolf).await.unwrap();
+
+    // Every game healthy, but the template predates its own columns.
+    assert!(
+        db::games::list(&pool)
+            .await
+            .unwrap()
+            .iter()
+            .all(|g| !g.video_producer_buffer_caps.is_empty())
+    );
+    sqlx::query("UPDATE engine_defaults SET video_producer_buffer_caps='', runner_base_create_json='' WHERE id=1")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    library::backfill_engine_config(&pool, &wolf).await.unwrap();
+
+    let d = db::games::engine_defaults(&pool).await.unwrap().unwrap();
+    assert_eq!(d.video_producer_buffer_caps, "video/x-raw, format=NV12");
+    // The HostConfig blob a docker runner cannot start without.
+    assert_eq!(
+        d.runner_base_create_json,
+        "{\"HostConfig\":{\"IpcMode\":\"host\"}}"
+    );
+    // ...and a game can now actually be created from it.
+    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
+    assert!(library::create(&pool, &wolf, new).await.is_ok());
 }
