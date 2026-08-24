@@ -80,6 +80,7 @@ async fn setup(test: &str) -> (Router, String, FakeWolf, sqlx::SqlitePool) {
         pool: pool.clone(),
         wolf,
         events: altc_api::events::EventHub::new(),
+        library: altc_api::storage::Library::default(),
     });
     (app, token, fake, pool)
 }

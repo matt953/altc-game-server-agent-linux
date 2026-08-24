@@ -40,7 +40,13 @@ async fn main() {
     let events = EventHub::new();
     spawn_bridge(wolf.clone(), events.clone(), pool.clone());
 
-    let app = routes::router(AppState { pool, wolf, events });
+    let library = altc_api::storage::Library::from_env();
+    let app = routes::router(AppState {
+        pool,
+        wolf,
+        events,
+        library,
+    });
     let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
         .await
         .expect("load tls cert");

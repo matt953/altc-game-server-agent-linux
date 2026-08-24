@@ -419,30 +419,50 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
     }
 }
 
-fn valid_new() -> serde_json::Value {
+/// A real folder tree, so create() validates against something that exists
+/// rather than being handed a Library that waves everything through.
+fn temp_library(name: &str) -> (std::path::PathBuf, altc_api::storage::Library) {
+    let root = std::env::temp_dir().join(format!("altc-lib-{}-{name}", std::process::id()));
+    let game = root.join("doom");
+    std::fs::create_dir_all(&game).unwrap();
+    std::fs::write(game.join("DOOMEternalx64vk.exe"), b"stub").unwrap();
+    let lib = altc_api::storage::Library::new(vec![root.clone()]);
+    (root, lib)
+}
+
+fn valid_new(root: &std::path::Path) -> serde_json::Value {
     json!({
         "title": "Doom Eternal",
         "image": "ghcr.io/matt953/wolf-runner:v7",
-        "mounts": ["/mnt/games/doom:/games/doom:rw"],
+        "mounts": [format!("{}:/games/doom:rw", root.join("doom").display())],
         "env": ["RUN_EXE=/games/doom/DOOMEternalx64vk.exe", "GAMEID=umu-782330"],
     })
 }
 
 // Each test needs its own socket: they run in parallel and would otherwise
 // bind the same path and race.
-async fn seeded(name: &str) -> (sqlx::SqlitePool, WolfClient, Apps) {
+async fn seeded(
+    name: &str,
+) -> (
+    sqlx::SqlitePool,
+    WolfClient,
+    Apps,
+    altc_api::storage::Library,
+    std::path::PathBuf,
+) {
     let pool = db::init_memory().await;
     let (wolf, apps) = start(name, vec![seed_app("1", "Seed")]).await;
     library::import_if_empty(&pool, &wolf).await.unwrap();
     library::backfill_engine_config(&pool, &wolf).await.unwrap();
-    (pool, wolf, apps)
+    let (root, lib) = temp_library(name);
+    (pool, wolf, apps, lib, root)
 }
 
 #[tokio::test]
 async fn a_game_added_over_the_api_reaches_wolf_launchable() {
-    let (pool, wolf, apps) = seeded("m3-add").await;
-    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
-    let game = library::create(&pool, &wolf, new).await.unwrap();
+    let (pool, wolf, apps, lib, root) = seeded("m3-add").await;
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    let game = library::create(&pool, &wolf, &lib, new).await.unwrap();
 
     let pushed = apps.lock().unwrap().clone();
     let added = pushed
@@ -468,11 +488,11 @@ async fn a_game_added_over_the_api_reaches_wolf_launchable() {
 
 #[tokio::test]
 async fn a_colon_in_a_mount_path_is_refused() {
-    let (pool, wolf, apps) = seeded("m3-colon").await;
-    let mut body = valid_new();
+    let (pool, wolf, apps, lib, root) = seeded("m3-colon").await;
+    let mut body = valid_new(&root);
     body["mounts"] = json!(["/mnt/games/Wolfenstein: The New Order:/games/w:rw"]);
     let new: library::NewGame = serde_json::from_value(body).unwrap();
-    let err = library::create(&pool, &wolf, new).await.unwrap_err();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
     assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     assert!(err.1.contains("source:destination:mode"), "got: {}", err.1);
     assert_eq!(apps.lock().unwrap().len(), 1, "nothing may be pushed");
@@ -480,30 +500,32 @@ async fn a_colon_in_a_mount_path_is_refused() {
 
 #[tokio::test]
 async fn a_game_without_run_exe_is_refused() {
-    let (pool, wolf, _apps) = seeded("m3-runexe").await;
-    let mut body = valid_new();
+    let (pool, wolf, _apps, lib, root) = seeded("m3-runexe").await;
+    let mut body = valid_new(&root);
     body["env"] = json!(["GAMEID=umu-1"]);
     let new: library::NewGame = serde_json::from_value(body).unwrap();
-    let err = library::create(&pool, &wolf, new).await.unwrap_err();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
     assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
     assert!(err.1.contains("RUN_EXE"));
 }
 
 #[tokio::test]
 async fn a_duplicate_title_is_refused() {
-    let (pool, wolf, _apps) = seeded("m3-dup").await;
-    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
-    library::create(&pool, &wolf, new).await.unwrap();
-    let again: library::NewGame = serde_json::from_value(valid_new()).unwrap();
-    let err = library::create(&pool, &wolf, again).await.unwrap_err();
+    let (pool, wolf, _apps, lib, root) = seeded("m3-dup").await;
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    library::create(&pool, &wolf, &lib, new).await.unwrap();
+    let again: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    let err = library::create(&pool, &wolf, &lib, again)
+        .await
+        .unwrap_err();
     assert_eq!(err.0, axum::http::StatusCode::CONFLICT);
 }
 
 #[tokio::test]
 async fn deleting_a_game_removes_it_from_wolf_and_drops_its_shares() {
-    let (pool, wolf, apps) = seeded("m3-delete").await;
-    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
-    let game = library::create(&pool, &wolf, new).await.unwrap();
+    let (pool, wolf, apps, lib, root) = seeded("m3-delete").await;
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    let game = library::create(&pool, &wolf, &lib, new).await.unwrap();
     let uid = db::users::insert(&pool, "dave", "member").await.unwrap();
     db::shares::set_for_app(&pool, &game.id, &[uid])
         .await
@@ -567,6 +589,60 @@ async fn the_new_game_template_is_completed_even_when_no_game_is_stale() {
         "{\"HostConfig\":{\"IpcMode\":\"host\"}}"
     );
     // ...and a game can now actually be created from it.
-    let new: library::NewGame = serde_json::from_value(valid_new()).unwrap();
-    assert!(library::create(&pool, &wolf, new).await.is_ok());
+    let (root, lib) = temp_library("m3-template");
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    assert!(library::create(&pool, &wolf, &lib, new).await.is_ok());
+}
+
+// The point of letting the agent see the media: an admin who picks the wrong
+// executable is told now, not by a black screen at launch.
+#[tokio::test]
+async fn a_missing_executable_is_caught_when_the_game_is_added() {
+    let (pool, wolf, apps, lib, root) = seeded("m3-badexe").await;
+    let mut body = valid_new(&root);
+    body["env"] = json!(["RUN_EXE=/games/doom/NotThere.exe"]);
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("no such executable"), "got: {}", err.1);
+    assert_eq!(apps.lock().unwrap().len(), 1, "nothing may be pushed");
+}
+
+#[tokio::test]
+async fn a_missing_game_folder_is_caught_when_the_game_is_added() {
+    let (pool, wolf, _apps, lib, root) = seeded("m3-badfolder").await;
+    let mut body = valid_new(&root);
+    body["mounts"] = json!([format!(
+        "{}:/games/doom:rw",
+        root.join("not-installed").display()
+    )]);
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
+    assert_eq!(err.0, axum::http::StatusCode::BAD_REQUEST);
+    assert!(err.1.contains("no such folder"), "got: {}", err.1);
+}
+
+#[tokio::test]
+async fn an_exe_outside_every_mount_is_refused() {
+    let (pool, wolf, _apps, lib, root) = seeded("m3-unmapped").await;
+    let mut body = valid_new(&root);
+    body["env"] = json!(["RUN_EXE=/somewhere/else/game.exe"]);
+    let new: library::NewGame = serde_json::from_value(body).unwrap();
+    let err = library::create(&pool, &wolf, &lib, new).await.unwrap_err();
+    assert!(
+        err.1.contains("not inside any of the mounts"),
+        "got: {}",
+        err.1
+    );
+}
+
+#[tokio::test]
+async fn creating_without_library_roots_is_refused_not_silently_unvalidated() {
+    let (pool, wolf, _apps, _lib, root) = seeded("m3-noroots").await;
+    let unconfigured = altc_api::storage::Library::default();
+    let new: library::NewGame = serde_json::from_value(valid_new(&root)).unwrap();
+    let err = library::create(&pool, &wolf, &unconfigured, new)
+        .await
+        .unwrap_err();
+    assert!(err.1.contains("ALTC_LIBRARY_ROOTS"), "got: {}", err.1);
 }

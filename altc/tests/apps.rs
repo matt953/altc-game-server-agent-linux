@@ -56,6 +56,7 @@ async fn setup(test: &str) -> (Router, String) {
             pool,
             wolf,
             events: altc_api::events::EventHub::new(),
+            library: altc_api::storage::Library::default(),
         }),
         token,
     )

@@ -312,7 +312,7 @@ pub struct NewGame {
     pub support_hdr: Option<bool>,
 }
 
-fn validate(new: &NewGame) -> Result<(), ApiError> {
+fn validate(new: &NewGame, lib: &crate::storage::Library) -> Result<(), ApiError> {
     if new.title.trim().is_empty() {
         return Err(ApiError::bad_request("title is required"));
     }
@@ -335,16 +335,56 @@ fn validate(new: &NewGame) -> Result<(), ApiError> {
             )));
         }
     }
-    if !new.env.iter().any(|e| e.starts_with("RUN_EXE=")) {
+    let Some(run_exe) = new.env.iter().find_map(|e| e.strip_prefix("RUN_EXE=")) else {
         return Err(ApiError::bad_request(
             "env must contain RUN_EXE=<path to the executable inside the container>",
         ));
+    };
+
+    // The agent has to be able to SEE the media it manages, the way Jellyfin
+    // does: it is what lets the add-a-game form browse to a game, and it is
+    // the only way to tell an admin their path is wrong before launch.
+    if !lib.is_configured() {
+        return Err(ApiError::internal(
+            "no library roots configured: set ALTC_LIBRARY_ROOTS and mount the games storage              into the container, otherwise the agent cannot verify the game exists",
+        ));
+    }
+    for m in &new.mounts {
+        let source = m.split(':').next().unwrap_or_default();
+        // Only game media is required to exist; the agent's own mounts (logs,
+        // runtime) live outside the library roots and are created on demand.
+        let source_path = std::path::Path::new(source);
+        if lib.is_within(source_path) && !source_path.exists() {
+            return Err(ApiError::bad_request(format!("no such folder: {source}")));
+        }
+    }
+    match crate::storage::host_path_for(run_exe, &new.mounts) {
+        None => {
+            return Err(ApiError::bad_request(format!(
+                "RUN_EXE '{run_exe}' is not inside any of the mounts"
+            )));
+        }
+        Some(host) => {
+            // Only judge paths inside the library: the agent's own mounts
+            // (logs, runtime) live elsewhere and are created on demand.
+            if lib.is_within(&host) && !host.exists() {
+                return Err(ApiError::bad_request(format!(
+                    "no such executable: {} (from RUN_EXE '{run_exe}')",
+                    host.display()
+                )));
+            }
+        }
     }
     Ok(())
 }
 
-pub async fn create(pool: &SqlitePool, wolf: &WolfClient, new: NewGame) -> Result<Game, ApiError> {
-    validate(&new)?;
+pub async fn create(
+    pool: &SqlitePool,
+    wolf: &WolfClient,
+    lib: &crate::storage::Library,
+    new: NewGame,
+) -> Result<Game, ApiError> {
+    validate(&new, lib)?;
     let existing = games::list(pool).await?;
     if existing
         .iter()

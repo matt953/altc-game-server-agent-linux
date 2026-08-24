@@ -4,6 +4,7 @@ use sqlx::SqlitePool;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub library: crate::storage::Library,
     pub pool: SqlitePool,
     pub wolf: WolfClient,
     pub events: EventHub,

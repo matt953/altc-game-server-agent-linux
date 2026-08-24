@@ -111,7 +111,7 @@ pub async fn create(
     AdminUser(actor): AdminUser,
     Json(new): Json<crate::library::NewGame>,
 ) -> Result<(axum::http::StatusCode, Json<AdminApp>), ApiError> {
-    let game = crate::library::create(&s.pool, &s.wolf, new).await?;
+    let game = crate::library::create(&s.pool, &s.wolf, &s.library, new).await?;
     tracing::info!("app '{}' added by '{}'", game.title, actor.name);
     Ok((axum::http::StatusCode::CREATED, Json(game.into())))
 }

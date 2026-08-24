@@ -2,20 +2,61 @@ use crate::error::ApiError;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
-/// Where the agent is allowed to look. Declared as a JSON array rather than a
-/// separated string: paths legitimately contain both ':' and ',', and a bind
-/// spec split on ':' is exactly what broke a launch on 2026-08-24.
-pub fn roots() -> Vec<PathBuf> {
-    let raw = std::env::var("ALTC_LIBRARY_ROOTS").unwrap_or_default();
-    if raw.trim().is_empty() {
-        return Vec::new();
-    }
-    match serde_json::from_str::<Vec<String>>(&raw) {
-        Ok(list) => list.into_iter().map(PathBuf::from).collect(),
-        Err(e) => {
-            tracing::error!("ALTC_LIBRARY_ROOTS is not a JSON array of paths: {e}");
-            Vec::new()
+/// Where the agent is allowed to look.
+///
+/// Read once at startup and carried in state, not fetched from the
+/// environment on every call: a global read is untestable in parallel and
+/// hides a boot-time misconfiguration until someone happens to browse.
+#[derive(Clone, Debug, Default)]
+pub struct Library {
+    roots: Vec<PathBuf>,
+}
+
+impl Library {
+    /// Declared as a JSON array rather than a separated string: paths
+    /// legitimately contain both ':' and ',', and splitting a bind spec on
+    /// ':' is exactly what broke a launch on 2026-08-24.
+    pub fn from_env() -> Self {
+        let raw = std::env::var("ALTC_LIBRARY_ROOTS").unwrap_or_default();
+        if raw.trim().is_empty() {
+            tracing::warn!(
+                "ALTC_LIBRARY_ROOTS is not set: the agent cannot see the games it manages, \
+                 so browsing and add-a-game validation are unavailable"
+            );
+            return Self::default();
         }
+        match serde_json::from_str::<Vec<String>>(&raw) {
+            Ok(list) => {
+                let me = Self {
+                    roots: list.into_iter().map(PathBuf::from).collect(),
+                };
+                for r in &me.roots {
+                    if !r.is_dir() {
+                        tracing::error!(
+                            "library root {} is declared but not readable; is it mounted into the container?",
+                            r.display()
+                        );
+                    }
+                }
+                me
+            }
+            Err(e) => {
+                tracing::error!("ALTC_LIBRARY_ROOTS is not a JSON array of paths: {e}");
+                Self::default()
+            }
+        }
+    }
+
+    pub fn new(roots: Vec<PathBuf>) -> Self {
+        Self { roots }
+    }
+
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    pub fn is_configured(&self) -> bool {
+        !self.roots.is_empty()
     }
 }
 
@@ -34,59 +75,94 @@ pub struct Entry {
 ///
 /// Canonicalised first, so symlinks and `..` are resolved before the check —
 /// comparing the raw string would let `/games/../../etc` through.
-pub fn resolve(requested: &str) -> Result<PathBuf, ApiError> {
-    let roots = roots();
-    if roots.is_empty() {
-        return Err(ApiError::internal(
-            "no library roots configured; set ALTC_LIBRARY_ROOTS and mount them into the container",
-        ));
-    }
-    let candidate = PathBuf::from(requested);
-    if !candidate.is_absolute() {
-        return Err(ApiError::bad_request("path must be absolute"));
-    }
-    let real = candidate
-        .canonicalize()
-        .map_err(|_| ApiError::not_found(format!("no such path: {requested}")))?;
+impl Library {
+    pub fn resolve(&self, requested: &str) -> Result<PathBuf, ApiError> {
+        let roots = &self.roots;
+        if roots.is_empty() {
+            return Err(ApiError::internal(
+                "no library roots configured; set ALTC_LIBRARY_ROOTS and mount them into the container",
+            ));
+        }
+        let candidate = PathBuf::from(requested);
+        if !candidate.is_absolute() {
+            return Err(ApiError::bad_request("path must be absolute"));
+        }
+        let real = candidate
+            .canonicalize()
+            .map_err(|_| ApiError::not_found(format!("no such path: {requested}")))?;
 
-    for root in &roots {
-        let Ok(real_root) = root.canonicalize() else {
-            tracing::warn!("library root {} is not readable from the agent", root.display());
-            continue;
-        };
-        if real == real_root || real.starts_with(&real_root) {
-            return Ok(real);
+        for root in roots {
+            let Ok(real_root) = root.canonicalize() else {
+                tracing::warn!(
+                    "library root {} is not readable from the agent",
+                    root.display()
+                );
+                continue;
+            };
+            if real == real_root || real.starts_with(&real_root) {
+                return Ok(real);
+            }
+        }
+        // Deliberately the same shape of answer as a missing path: whether
+        // something exists outside the library is not the caller's business.
+        Err(ApiError::not_found(format!("no such path: {requested}")))
+    }
+
+    /// Whether a path would fall inside a root, WITHOUT requiring it to exist.
+    ///
+    /// resolve() canonicalises, which fails outright for a missing path — so it
+    /// can never answer "this is in the library but is not there", which is
+    /// exactly what an admin needs to be told when they pick the wrong folder.
+    /// Walks up to the nearest existing ancestor and checks that instead.
+    pub fn is_within(&self, path: &Path) -> bool {
+        let mut probe = path;
+        loop {
+            if probe.exists() {
+                let Ok(real) = probe.canonicalize() else {
+                    return false;
+                };
+                return self.roots.iter().any(|root| {
+                    root.canonicalize()
+                        .map(|r| real == r || real.starts_with(&r))
+                        .unwrap_or(false)
+                });
+            }
+            match probe.parent() {
+                Some(parent) => probe = parent,
+                None => return false,
+            }
         }
     }
-    // Deliberately the same shape of answer as a missing path: whether
-    // something exists outside the library is not the caller's business.
-    Err(ApiError::not_found(format!("no such path: {requested}")))
-}
 
-pub fn browse(requested: &str) -> Result<Vec<Entry>, ApiError> {
-    let dir = resolve(requested)?;
-    if !dir.is_dir() {
-        return Err(ApiError::bad_request("not a directory"));
-    }
-    let mut entries = Vec::new();
-    for item in std::fs::read_dir(&dir).map_err(|e| ApiError::internal(e.to_string()))? {
-        let Ok(item) = item else { continue };
-        let Ok(meta) = item.metadata() else { continue };
-        let name = item.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
+    pub fn browse(&self, requested: &str) -> Result<Vec<Entry>, ApiError> {
+        let dir = self.resolve(requested)?;
+        if !dir.is_dir() {
+            return Err(ApiError::bad_request("not a directory"));
         }
-        entries.push(Entry {
-            name,
-            path: item.path().to_string_lossy().to_string(),
-            is_dir: meta.is_dir(),
-            size: (!meta.is_dir()).then(|| meta.len()),
+        let mut entries = Vec::new();
+        for item in std::fs::read_dir(&dir).map_err(|e| ApiError::internal(e.to_string()))? {
+            let Ok(item) = item else { continue };
+            let Ok(meta) = item.metadata() else { continue };
+            let name = item.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            entries.push(Entry {
+                name,
+                path: item.path().to_string_lossy().to_string(),
+                is_dir: meta.is_dir(),
+                size: (!meta.is_dir()).then(|| meta.len()),
+            });
+        }
+        // Folders first, then alphabetical: browsing a library is a navigation
+        // task, and a user is looking for a folder.
+        entries.sort_by(|a, b| {
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
+        Ok(entries)
     }
-    // Folders first, then alphabetical: browsing a library is a navigation
-    // task, and a user is looking for a folder.
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
-    Ok(entries)
 }
 
 /// Maps a path inside the runner container back to the host, using the game's
@@ -107,7 +183,10 @@ pub fn host_path_for(container_path: &str, mounts: &[String]) -> Option<PathBuf>
             continue; // /games/doom must not match /games/doomsday
         }
         // Longest destination wins, so nested mounts resolve correctly.
-        if best.as_ref().is_none_or(|(len, _)| destination.len() > *len) {
+        if best
+            .as_ref()
+            .is_none_or(|(len, _)| destination.len() > *len)
+        {
             best = Some((
                 destination.len(),
                 PathBuf::from(source).join(rest.trim_start_matches('/')),
@@ -159,10 +238,21 @@ mod tests {
     }
 
     #[test]
-    fn browsing_needs_roots_configured() {
-        // Not set in the test environment: must refuse rather than expose /.
-        unsafe { std::env::remove_var("ALTC_LIBRARY_ROOTS") };
-        let err = resolve("/etc").unwrap_err();
+    fn an_unconfigured_library_refuses_rather_than_exposing_the_filesystem() {
+        let err = Library::default().resolve("/etc").unwrap_err();
         assert_eq!(err.0, axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn traversal_cannot_escape_a_root() {
+        let tmp = std::env::temp_dir().join(format!("altc-roots-{}", std::process::id()));
+        let inside = tmp.join("games");
+        std::fs::create_dir_all(&inside).unwrap();
+        let lib = Library::new(vec![inside.clone()]);
+        assert!(lib.resolve(inside.to_str().unwrap()).is_ok());
+        // Resolved before the check, so this lands outside the root.
+        let escape = inside.join("../../etc");
+        assert!(lib.resolve(escape.to_str().unwrap()).is_err());
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

@@ -6,5 +6,6 @@ pub mod events;
 pub mod library;
 pub mod routes;
 pub mod state;
+pub mod storage;
 pub mod tls;
 pub mod wolf;

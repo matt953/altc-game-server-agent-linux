@@ -19,6 +19,7 @@ async fn setup() -> (Router, EventHub, String, i64) {
         pool: pool.clone(),
         wolf,
         events: events.clone(),
+        library: altc_api::storage::Library::default(),
     });
     (app, events, token, owner_id)
 }
@@ -172,6 +173,7 @@ async fn members_only_see_their_own_devices() {
         pool: pool.clone(),
         wolf: WolfClient::new("/nonexistent/wolf.sock".into()),
         events: events.clone(),
+        library: altc_api::storage::Library::default(),
     });
 
     let emit = vec![

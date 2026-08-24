@@ -2,6 +2,7 @@ mod apps;
 mod events;
 mod me;
 mod pairing;
+mod storage;
 mod users;
 
 use crate::state::AppState;
@@ -20,6 +21,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/users/{id}", delete(users::remove))
         .route("/api/v1/users/{id}/tokens", post(users::rotate_token))
         .route("/api/v1/events", get(events::stream))
+        .route("/api/v1/storage/roots", get(storage::roots))
+        .route("/api/v1/storage/browse", get(storage::browse))
         .route("/api/v1/apps", get(apps::list).post(apps::create))
         .route(
             "/api/v1/apps/{app_id}",
