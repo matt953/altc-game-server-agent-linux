@@ -114,6 +114,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_per_title_settings",
         "ALTER TABLE games ADD COLUMN controller_override TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // A browser wizard needs a credential a human can type and re-enter.
+        // Nullable: every account that predates passwords has none and stays
+        // valid via its token until one is set.
+        "0008_passwords",
+        "ALTER TABLE users ADD COLUMN password_hash TEXT;",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {

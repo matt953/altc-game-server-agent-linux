@@ -83,3 +83,49 @@ pub async fn rotate_token(
     tracing::info!("token rotated for '{}' by '{}'", target.name, actor.name);
     Ok(Json(json!({"token": token})))
 }
+
+#[derive(serde::Deserialize)]
+pub struct Login {
+    name: String,
+    password: String,
+}
+
+/// Exchanges a name and password for a token.
+///
+/// Unauthenticated by necessity — it is how you obtain the credential
+/// everything else requires. Tokens remain the auth mechanism for every other
+/// request; this only gives a browser a way to get one, since it cannot hold a
+/// token that was printed to a log once.
+pub async fn login(
+    State(s): State<AppState>,
+    Json(body): Json<Login>,
+) -> Result<Json<Value>, ApiError> {
+    let Some(user_id) = crate::db::passwords::check(&s.pool, &body.name, &body.password).await
+    else {
+        // One message for every failure: a caller must not be able to
+        // enumerate which accounts exist.
+        tracing::warn!("failed login for '{}'", body.name);
+        return Err(ApiError::unauthorized("invalid name or password"));
+    };
+    let user = crate::db::users::fetch(&s.pool, user_id).await?;
+    let token = crate::db::tokens::issue(&s.pool, user_id, "login").await?;
+    tracing::info!("'{}' signed in", user.name);
+    Ok(Json(json!({ "token": token, "user": user })))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetPassword {
+    password: String,
+}
+
+/// Sets your own password. Needed by every account that predates passwords,
+/// including the owner, whose token was printed to a log exactly once.
+pub async fn set_own_password(
+    State(s): State<AppState>,
+    user: User,
+    Json(body): Json<SetPassword>,
+) -> Result<Json<Value>, ApiError> {
+    crate::db::passwords::set(&s.pool, user.id, &body.password).await?;
+    tracing::info!("'{}' set their password", user.name);
+    Ok(Json(json!({ "ok": true })))
+}

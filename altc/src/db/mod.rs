@@ -1,6 +1,7 @@
 pub mod devices;
 pub mod games;
 pub mod migrations;
+pub mod passwords;
 pub mod shares;
 pub mod tokens;
 pub mod users;

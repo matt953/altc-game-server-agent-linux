@@ -165,3 +165,109 @@ async fn rotate_kills_old_token() {
     let (status, _) = send(&app, get("/api/v1/me", &new)).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+// Passwords are additive: a token issued before they existed must keep working
+// exactly as before, or every paired device and saved client breaks.
+#[tokio::test]
+async fn a_token_still_works_after_passwords_exist() {
+    let (app, token) = setup().await;
+    let (status, _) = send(&app, get("/api/v1/me", &token)).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn login_returns_a_working_token() {
+    let (app, token) = setup().await;
+    // The owner predates passwords, so logging in is impossible until one is set.
+    let (status, _) = send(
+        &app,
+        Request::post("/api/v1/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"name":"owner","password":"whatever12"}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let (status, _) = send(
+        &app,
+        Request::put("/api/v1/me/password")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"password":"a good password"}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = send(
+        &app,
+        Request::post("/api/v1/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"name":"owner","password":"a good password"}"#,
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let issued = body["token"].as_str().unwrap().to_string();
+    assert_ne!(
+        issued, token,
+        "login must mint a new token, not reveal the old one"
+    );
+
+    // The token login handed back must actually authenticate.
+    let (status, me) = send(&app, get("/api/v1/me", &issued)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["name"], "owner");
+}
+
+#[tokio::test]
+async fn a_wrong_password_and_an_unknown_user_are_indistinguishable() {
+    let (app, token) = setup().await;
+    send(
+        &app,
+        Request::put("/api/v1/me/password")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"password":"a good password"}"#))
+            .unwrap(),
+    )
+    .await;
+
+    let attempt = |body: &'static str| {
+        let app = app.clone();
+        async move {
+            send(
+                &app,
+                Request::post("/api/v1/login")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+        }
+    };
+    let (s1, b1) = attempt(r#"{"name":"owner","password":"wrong"}"#).await;
+    let (s2, b2) = attempt(r#"{"name":"ghost","password":"wrong"}"#).await;
+    assert_eq!(s1, StatusCode::UNAUTHORIZED);
+    assert_eq!(s2, StatusCode::UNAUTHORIZED);
+    // Same status AND same body, or the difference leaks which names exist.
+    assert_eq!(b1, b2);
+}
+
+#[tokio::test]
+async fn a_short_password_is_refused() {
+    let (app, token) = setup().await;
+    let (status, _) = send(
+        &app,
+        Request::put("/api/v1/me/password")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"password":"short"}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
