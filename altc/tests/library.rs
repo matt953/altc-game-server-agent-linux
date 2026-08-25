@@ -246,6 +246,7 @@ async fn push_of_a_game_without_engine_config_is_refused_not_half_done() {
             tagline: String::new(),
             developer: String::new(),
             genres: String::new(),
+            controller_override: String::new(),
         },
     )
     .await
@@ -295,6 +296,7 @@ async fn backfill_completes_old_rows_and_keeps_overrides() {
                 tagline: String::new(),
                 developer: String::new(),
                 genres: String::new(),
+                controller_override: String::new(),
             },
         )
         .await
@@ -356,6 +358,7 @@ async fn backfill_keeps_a_game_wolf_does_not_know() {
             tagline: String::new(),
             developer: String::new(),
             genres: String::new(),
+            controller_override: String::new(),
         },
     )
     .await
@@ -456,6 +459,7 @@ async fn allocated_ids_are_unique_and_fit_a_moonlight_client() {
                 tagline: String::new(),
                 developer: String::new(),
                 genres: String::new(),
+                controller_override: String::new(),
             },
         )
         .await

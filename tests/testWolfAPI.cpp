@@ -297,6 +297,38 @@ TEST_CASE("APPs APIs", "[API]") {
   REQUIRE(apps3.apps.size() == 2);
 }
 
+TEST_CASE("A per-game controller override survives a serialize round trip", "[API]") {
+  // The client-level controllers_override is per DEVICE, so it cannot say
+  // "No Man's Sky is XInput-only" without also stripping Baldur's Gate 3 of
+  // its DualSense glyphs on that same client. The per-game value has to reach
+  // pad creation, which means surviving apps/add.
+  auto event_bus = std::make_shared<events::EventBusType>();
+  auto runner = state::get_runner(
+      rfl::json::read<wolf::config::AppCMD>(R"({"type":"process","run_cmd":"sh -c true"})").value(),
+      event_bus);
+
+  auto forced = events::App{.base = {.title = "NMS", .id = "7", .support_hdr = false, .icon_png_path = ""},
+                            .video_producer_buffer_caps = "caps",
+                            .h264_gst_pipeline = "h264",
+                            .hevc_gst_pipeline = "hevc",
+                            .av1_gst_pipeline = "av1",
+                            .render_node = "/dev/dri/renderD128",
+                            .opus_gst_pipeline = "opus",
+                            .start_virtual_compositor = true,
+                            .start_audio_server = true,
+                            .controller_override = wolf::config::ControllerType::XBOX,
+                            .runner = runner};
+
+  auto back = rfl::Reflector<events::App>::to(rfl::Reflector<events::App>::from(forced), event_bus);
+  REQUIRE(back.controller_override == wolf::config::ControllerType::XBOX);
+
+  // A game that says nothing must keep today's behaviour exactly.
+  auto silent = forced;
+  silent.controller_override = wolf::config::ControllerType::AUTO;
+  auto silent_back = rfl::Reflector<events::App>::to(rfl::Reflector<events::App>::from(silent), event_bus);
+  REQUIRE(silent_back.controller_override == wolf::config::ControllerType::AUTO);
+}
+
 TEST_CASE("An app survives a serialize round trip with its producer caps", "[API]") {
   // Reflector<App> omitted video_producer_buffer_caps, so any app added over
   // the socket API came back with an empty one, built a malformed video

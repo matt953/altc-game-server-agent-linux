@@ -12,26 +12,37 @@ use tower::ServiceExt;
 
 // Mirrors the exact shape captured from production Wolf 2026-08-23.
 fn fake_wolf_router() -> Router {
-    Router::new().route(
-        "/api/v1/apps",
-        get(|| async {
-            Json(json!({"success": true, "apps": [
-                {"title": "Wolf UI", "id": "134906179", "support_hdr": false,
-                 "icon_png_path": "https://example.com/wolf_ui_icon.png",
-                 "h264_gst_pipeline": "interpipesrc name=... vah264enc ...",
-                 "hevc_gst_pipeline": "...", "av1_gst_pipeline": "...",
-                 "render_node": "/dev/dri/renderD128",
-                 "opus_gst_pipeline": "...", "start_virtual_compositor": true,
-                 "start_audio_server": true, "runner": {"type": "docker"}},
-                {"title": "Baldur’s Gate 3", "id": "1354165435", "support_hdr": false,
-                 "icon_png_path": "",
-                 "h264_gst_pipeline": "...", "hevc_gst_pipeline": "...",
-                 "av1_gst_pipeline": "...", "render_node": "/dev/dri/renderD128",
-                 "opus_gst_pipeline": "...", "start_virtual_compositor": true,
-                 "start_audio_server": true, "runner": {"type": "docker"}}
-            ]}))
-        }),
-    )
+    Router::new()
+        .route(
+            "/api/v1/apps",
+            get(|| async {
+                Json(json!({"success": true, "apps": [
+                    {"title": "Wolf UI", "id": "134906179", "support_hdr": false,
+                     "icon_png_path": "https://example.com/wolf_ui_icon.png",
+                     "h264_gst_pipeline": "interpipesrc name=... vah264enc ...",
+                     "hevc_gst_pipeline": "...", "av1_gst_pipeline": "...",
+                     "render_node": "/dev/dri/renderD128",
+                     "opus_gst_pipeline": "...", "start_virtual_compositor": true,
+                     "start_audio_server": true, "runner": {"type": "docker"}},
+                    {"title": "Baldur’s Gate 3", "id": "1354165435", "support_hdr": false,
+                     "icon_png_path": "",
+                     "h264_gst_pipeline": "...", "hevc_gst_pipeline": "...",
+                     "av1_gst_pipeline": "...", "render_node": "/dev/dri/renderD128",
+                     "opus_gst_pipeline": "...", "start_virtual_compositor": true,
+                     "start_audio_server": true, "runner": {"type": "docker"}}
+                ]}))
+            }),
+        )
+        // A push follows any edit, so the fake has to accept one or every write
+        // looks like a wolf outage.
+        .route(
+            "/api/v1/apps/add",
+            axum::routing::post(|| async { Json(json!({"success": true})) }),
+        )
+        .route(
+            "/api/v1/apps/delete",
+            axum::routing::post(|| async { Json(json!({"success": true})) }),
+        )
 }
 
 async fn setup(test: &str) -> (Router, String) {
@@ -322,4 +333,69 @@ async fn shares_for_an_unknown_app_are_a_404_not_everyone() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_per_title_controller_override_is_validated_and_stored() {
+    let (app, owner) = setup("controller").await;
+    // Only the pad types Wolf actually knows.
+    let (status, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            "/api/v1/apps/1354165435",
+            &owner,
+            r#"{"controller_override":"PLAYSTATION5"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, body) = send(
+        &app,
+        authed(
+            "PATCH",
+            "/api/v1/apps/1354165435",
+            &owner,
+            r#"{"controller_override":"xbox"}"#,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["title"], "Baldur\u{2019}s Gate 3",
+        "a settings edit must not rename the game"
+    );
+
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &owner, "")).await;
+    let bg3 = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "1354165435")
+        .unwrap();
+    assert_eq!(bg3["controller_override"], "XBOX", "case is normalised");
+
+    // AUTO means "no opinion", stored as absent rather than as a value.
+    send(
+        &app,
+        authed(
+            "PATCH",
+            "/api/v1/apps/1354165435",
+            &owner,
+            r#"{"controller_override":"AUTO"}"#,
+        ),
+    )
+    .await;
+    let (_, body) = send(&app, authed("GET", "/api/v1/apps", &owner, "")).await;
+    let bg3 = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] == "1354165435")
+        .unwrap();
+    assert!(
+        bg3.get("controller_override").is_none(),
+        "AUTO must not appear as a setting"
+    );
 }

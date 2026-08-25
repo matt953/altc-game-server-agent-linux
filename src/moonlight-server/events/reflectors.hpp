@@ -64,6 +64,9 @@ template <> struct Reflector<events::App> {
      * endpoint_AddApp fills it from the config default when absent.
      */
     std::optional<std::string> video_producer_buffer_caps;
+    /// Optional so existing callers are unaffected; absent means AUTO, which
+    /// is exactly today's behaviour.
+    std::optional<wolf::config::ControllerType> controller_override;
     Reflector<events::Runner>::ReflType runner;
   };
 
@@ -80,6 +83,7 @@ template <> struct Reflector<events::App> {
             .start_virtual_compositor = v.start_virtual_compositor,
             .start_audio_server = v.start_audio_server,
             .video_producer_buffer_caps = v.video_producer_buffer_caps,
+            .controller_override = v.controller_override,
             .runner = v.runner->serialize()};
   }
 
@@ -95,6 +99,7 @@ template <> struct Reflector<events::App> {
         .opus_gst_pipeline = app.opus_gst_pipeline,
         .start_virtual_compositor = app.start_virtual_compositor,
         .start_audio_server = app.start_audio_server,
+        .controller_override = app.controller_override.value_or(wolf::config::ControllerType::AUTO),
         .runner = runner,
     };
   }

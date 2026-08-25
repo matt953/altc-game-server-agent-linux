@@ -24,6 +24,9 @@ pub struct ClientApp {
     pub release_date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<String>,
+    /// Absent means the client decides, which is the default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controller_override: Option<String>,
     /// platinum/gold/silver/bronze/borked — what a client shows as a badge so
     /// a user knows whether a game actually works before launching it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -71,6 +74,7 @@ pub async fn list(State(s): State<AppState>, user: User) -> Result<Json<Vec<Clie
             description: blank_to_none(&g.description),
             release_date: blank_to_none(&g.release_date),
             store: blank_to_none(&g.store),
+            controller_override: blank_to_none(&g.controller_override),
             protondb_tier: blank_to_none(&g.protondb_tier),
             tagline: blank_to_none(&g.tagline),
             developer: blank_to_none(&g.developer),
@@ -187,6 +191,12 @@ pub async fn create(
 pub struct AppEdit {
     title: Option<String>,
     icon: Option<String>,
+    /// XBOX / PS / NINTENDO / AUTO. Per-title, so one game can be forced to
+    /// XInput without costing every other game on that client its DualSense.
+    controller_override: Option<String>,
+    /// Which GPU runs this game. Already per-app in Wolf; with two GPUs it is
+    /// capacity as much as preference.
+    render_node: Option<String>,
 }
 
 /// Title and art only. The id is never editable: shares and every client's
@@ -208,6 +218,33 @@ pub async fn update(
     }
     let icon = edit.icon.unwrap_or_else(|| current.icon_png_path.clone());
     games::rename(&s.pool, &app_id, title.trim(), &icon).await?;
+
+    if edit.controller_override.is_some() || edit.render_node.is_some() {
+        let mut g = games::list(&s.pool)
+            .await?
+            .into_iter()
+            .find(|g| g.id == app_id)
+            .ok_or_else(|| ApiError::not_found("no such app"))?;
+        if let Some(c) = edit.controller_override {
+            let upper = c.trim().to_uppercase();
+            if !matches!(upper.as_str(), "XBOX" | "PS" | "NINTENDO" | "AUTO" | "") {
+                return Err(ApiError::bad_request(
+                    "controller_override must be XBOX, PS, NINTENDO or AUTO",
+                ));
+            }
+            // AUTO is stored as empty: "no opinion" and "explicitly automatic"
+            // are the same thing, and one representation avoids ambiguity.
+            g.controller_override = if upper == "AUTO" {
+                String::new()
+            } else {
+                upper
+            };
+        }
+        if let Some(r) = edit.render_node {
+            g.render_node = r;
+        }
+        games::upsert(&s.pool, &g).await?;
+    }
     crate::library::push(&s.pool, &s.wolf).await?;
     tracing::info!("app '{}' edited by '{}'", title.trim(), actor.name);
 

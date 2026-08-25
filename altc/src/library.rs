@@ -61,6 +61,7 @@ fn game_from(app: &Value) -> Game {
         tagline: String::new(),
         developer: String::new(),
         genres: String::new(),
+        controller_override: String::new(),
     }
 }
 
@@ -173,6 +174,12 @@ pub fn to_wolf_app(g: &Game) -> Value {
         "opus_gst_pipeline": g.opus_gst_pipeline,
         "start_audio_server": g.start_audio_server,
         "start_virtual_compositor": g.start_virtual_compositor,
+        // Absent means AUTO, which is exactly today's behaviour.
+        "controller_override": if g.controller_override.is_empty() {
+            json!("AUTO")
+        } else {
+            json!(g.controller_override)
+        },
         "runner": runner,
     })
 }
@@ -472,6 +479,7 @@ pub async fn create(
         tagline: String::new(),
         developer: String::new(),
         genres: String::new(),
+        controller_override: String::new(),
     };
     games::upsert(pool, &game).await?;
     push(pool, wolf).await?;

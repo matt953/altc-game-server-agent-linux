@@ -58,6 +58,16 @@ std::shared_ptr<events::JoypadTypes> create_new_joypad(const events::StreamSessi
   auto controllers_override = session.client_settings->controllers_override;
   auto final_type = controllers_override.size() > controller_number ? controllers_override[controller_number]
                                                                     : wolf::config::ControllerType::AUTO;
+  /**
+   * A per-game override wins over the client's. The client setting is a
+   * preference; the game's states a fact about the game -- No Man's Sky only
+   * speaks XInput. If the client's won, a per-game setting would be silently
+   * ignored on any client that happened to have one, which is the whole
+   * problem it exists to solve.
+   */
+  if (session.app && session.app->controller_override != wolf::config::ControllerType::AUTO) {
+    final_type = session.app->controller_override;
+  }
   if (final_type == wolf::config::ControllerType::AUTO) {
     // Motion-gated per-client override. When this slot has no
     // `controllers_override`, the client advertises GYRO or

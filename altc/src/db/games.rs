@@ -37,6 +37,9 @@ pub struct Game {
     pub tagline: String,
     pub developer: String,
     pub genres: String,
+    /// XBOX / PS / NINTENDO, or empty for AUTO. Forces the pad type for this
+    /// game whatever the client asked for.
+    pub controller_override: String,
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Game>, ApiError> {
@@ -59,8 +62,8 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
                             video_producer_buffer_caps, h264_gst_pipeline, hevc_gst_pipeline, av1_gst_pipeline,
                             opus_gst_pipeline, start_audio_server, start_virtual_compositor,
                             store, store_id, slug, release_date, description, protondb_tier,
-                            steam_appid, appid_source, tagline, developer, genres)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            steam_appid, appid_source, tagline, developer, genres, controller_override)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             support_hdr = excluded.support_hdr,
@@ -84,7 +87,8 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
             appid_source = excluded.appid_source,
             tagline = excluded.tagline,
             developer = excluded.developer,
-            genres = excluded.genres",
+            genres = excluded.genres,
+            controller_override = excluded.controller_override",
     )
     .bind(&g.id)
     .bind(&g.title)
@@ -110,6 +114,7 @@ pub async fn upsert(pool: &SqlitePool, g: &Game) -> Result<(), ApiError> {
     .bind(&g.tagline)
     .bind(&g.developer)
     .bind(&g.genres)
+    .bind(&g.controller_override)
     .execute(pool)
     .await?;
     Ok(())

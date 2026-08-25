@@ -75,6 +75,14 @@ struct App {
   std::string opus_gst_pipeline;
   bool start_virtual_compositor;
   bool start_audio_server;
+  /**
+   * Forces the virtual pad type for THIS game, whatever the client asked for.
+   * Exists because the client-level `controllers_override` is per-device and
+   * so cannot say "No Man's Sky is XInput-only" without also stripping
+   * Baldur's Gate 3 of its DualSense glyphs on the same client.
+   * AUTO (default) changes nothing.
+   */
+  wolf::config::ControllerType controller_override = wolf::config::ControllerType::AUTO;
   std::shared_ptr<Runner> runner;
 };
 

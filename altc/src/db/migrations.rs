@@ -107,6 +107,13 @@ const MIGRATIONS: &[(&str, &str)] = &[
          ALTER TABLE games ADD COLUMN developer TEXT NOT NULL DEFAULT '';
          ALTER TABLE games ADD COLUMN genres TEXT NOT NULL DEFAULT '';",
     ),
+    (
+        // Per-title settings. controller_override states a fact about the game
+        // (No Man's Sky is XInput-only) where the client-level setting is a
+        // per-device preference and cannot express it.
+        "0007_per_title_settings",
+        "ALTER TABLE games ADD COLUMN controller_override TEXT NOT NULL DEFAULT '';",
+    ),
 ];
 
 pub async fn run(pool: &SqlitePool) {
