@@ -164,22 +164,34 @@ setup_moonlight_handlers(const immer::box<state::AppState> &app_state,
         auto w_display_ready = on_ready->get_future().then([session, runtime_dir](auto fut) {
           streaming::WaylandDisplayReady ready = fut.get();
 
-          auto wl_state = virtual_display::create_wayland_display(ready.wayland_plugin, ready.wayland_socket_name);
-          // Set the wayland display
-          session->wayland_display->store(wl_state);
+          /**
+           * An app that starts no virtual compositor never gets a wayland
+           * socket: the branch above fulfils this promise with an empty value
+           * purely so the runner still starts. Everything below assumes a
+           * compositor, so running it anyway created a display from a null
+           * plugin, replaced the real uinput devices just created with wayland
+           * ones, and then waited 5s for a socket that cannot exist before
+           * killing the runner. Test ball streamed for ten seconds and died
+           * (field-diagnosed 2026-08-25).
+           */
+          if (session->app->start_virtual_compositor) {
+            auto wl_state = virtual_display::create_wayland_display(ready.wayland_plugin, ready.wayland_socket_name);
+            // Set the wayland display
+            session->wayland_display->store(wl_state);
 
-          // Set virtual devices
-          session->mouse->emplace(virtual_display::WaylandMouse(wl_state));
-          session->keyboard->emplace(virtual_display::WaylandKeyboard(wl_state));
-          session->touch_screen->emplace(virtual_display::WaylandTouchScreen(wl_state));
+            // Set virtual devices
+            session->mouse->emplace(virtual_display::WaylandMouse(wl_state));
+            session->keyboard->emplace(virtual_display::WaylandKeyboard(wl_state));
+            session->touch_screen->emplace(virtual_display::WaylandTouchScreen(wl_state));
 
-          if (!wait_for_wayland_socket(runtime_dir, ready.wayland_socket_name)) {
-            logs::log(logs::error,
-                      "[STREAM_SESSION] Wayland socket {} was not ready, aborting runner startup",
-                      ready.wayland_socket_name);
-            session->event_bus->fire_event(
-                immer::box<events::StopStreamEvent>(events::StopStreamEvent{.session_id = session->session_id}));
-            return;
+            if (!wait_for_wayland_socket(runtime_dir, ready.wayland_socket_name)) {
+              logs::log(logs::error,
+                        "[STREAM_SESSION] Wayland socket {} was not ready, aborting runner startup",
+                        ready.wayland_socket_name);
+              session->event_bus->fire_event(
+                  immer::box<events::StopStreamEvent>(events::StopStreamEvent{.session_id = session->session_id}));
+              return;
+            }
           }
 
           logs::log(logs::debug, "[STREAM_SESSION] Start runner");
