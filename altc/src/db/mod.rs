@@ -40,19 +40,21 @@ async fn schema(pool: &SqlitePool) {
     migrations::run(pool).await;
 }
 
-// First boot: create the owner and print their token exactly once.
-pub async fn bootstrap_owner(pool: &SqlitePool) {
+/// Reports whether anyone has claimed this server yet.
+///
+/// No longer creates an owner or prints a token. That old behaviour assumed
+/// shell access to read the log, left the credential sitting in logs forever,
+/// and had no recovery path. The owner is now created by POST /api/v1/setup,
+/// which closes permanently once used.
+pub async fn report_claim_state(pool: &SqlitePool) {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
         .await
         .expect("count users");
     if count == 0 {
-        let id = users::insert(pool, "owner", "owner")
-            .await
-            .expect("insert owner");
-        let token = tokens::issue(pool, id, "bootstrap")
-            .await
-            .expect("insert owner token");
-        tracing::warn!("FIRST BOOT — OWNER TOKEN (shown once, store it now): {token}");
+        tracing::warn!(
+            "This server has not been claimed yet. Open it in a browser to create the owner \
+             account; the claim window closes for good once someone does."
+        );
     }
 }

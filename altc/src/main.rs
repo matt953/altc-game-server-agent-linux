@@ -28,7 +28,7 @@ async fn main() {
     fs::create_dir_all(&state_dir).expect("create altc state dir");
 
     let pool = db::init(&state_dir).await;
-    db::bootstrap_owner(&pool).await;
+    db::report_claim_state(&pool).await;
 
     let (cert, key) = tls::ensure_tls_cert(&state_dir);
     let listeners = altc_api::serve::Listeners::from_env();
