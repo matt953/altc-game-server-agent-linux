@@ -6,7 +6,7 @@ use altc_api::{
     tls,
     wolf::WolfClient,
 };
-use std::{fs, net::SocketAddr, path::PathBuf};
+use std::{fs, path::PathBuf};
 
 #[tokio::main]
 async fn main() {
@@ -31,10 +31,10 @@ async fn main() {
     db::bootstrap_owner(&pool).await;
 
     let (cert, key) = tls::ensure_tls_cert(&state_dir);
-    let port: u16 = std::env::var("ALTC_API_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(47990);
+    let listeners = altc_api::serve::Listeners::from_env();
+    if listeners.http.is_none() && listeners.https.is_none() {
+        panic!("both ALTC_API_PORT and ALTC_HTTP_PORT are disabled: nothing could reach the agent");
+    }
 
     let wolf = WolfClient::from_env();
     let events = EventHub::new();
@@ -50,13 +50,7 @@ async fn main() {
         library,
         art_dir,
     });
-    let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
-        .await
-        .expect("load tls cert");
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    tracing::info!("altc-api listening on https://{addr}");
-    axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
-        .await
-        .expect("server");
+    tracing::info!("altc-api listening on {}", listeners.describe());
+    altc_api::serve::warn_about_http(&listeners);
+    altc_api::serve::run(app, listeners, &cert, &key).await;
 }

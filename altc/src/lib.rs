@@ -7,6 +7,7 @@ pub mod identity;
 pub mod library;
 pub mod metadata;
 pub mod routes;
+pub mod serve;
 pub mod state;
 pub mod storage;
 pub mod tls;
