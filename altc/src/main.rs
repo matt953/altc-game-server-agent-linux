@@ -43,7 +43,9 @@ async fn main() {
     let library = altc_api::storage::Library::from_env();
     let art_dir = state_dir.join("art");
     fs::create_dir_all(&art_dir).expect("create art cache dir");
+    altc_api::routes::warn_if_recovery_armed(&state_dir);
     let app = routes::router(AppState {
+        state_dir: state_dir.clone(),
         pool,
         wolf,
         events,

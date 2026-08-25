@@ -15,6 +15,7 @@ async fn setup() -> (Router, String) {
     let wolf = WolfClient::new("/nonexistent/wolf.sock".into());
     (
         routes::router(AppState {
+            state_dir: std::env::temp_dir().join("altc-test-state"),
             pool,
             wolf,
             events: altc_api::events::EventHub::new(),

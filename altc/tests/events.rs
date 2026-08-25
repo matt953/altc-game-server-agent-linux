@@ -16,6 +16,7 @@ async fn setup() -> (Router, EventHub, String, i64) {
     let events = EventHub::new();
     let wolf = WolfClient::new("/nonexistent/wolf.sock".into());
     let app = routes::router(AppState {
+        state_dir: std::env::temp_dir().join("altc-test-state"),
         pool: pool.clone(),
         wolf,
         events: events.clone(),
@@ -171,6 +172,7 @@ async fn members_only_see_their_own_devices() {
 
     let events = EventHub::new();
     let app = routes::router(AppState {
+        state_dir: std::env::temp_dir().join("altc-test-state"),
         pool: pool.clone(),
         wolf: WolfClient::new("/nonexistent/wolf.sock".into()),
         events: events.clone(),

@@ -64,6 +64,7 @@ async fn setup(test: &str) -> (Router, String) {
         .unwrap();
     (
         routes::router(AppState {
+            state_dir: std::env::temp_dir().join("altc-test-state"),
             pool,
             wolf,
             events: altc_api::events::EventHub::new(),

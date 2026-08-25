@@ -77,6 +77,7 @@ async fn setup(test: &str) -> (Router, String, FakeWolf, sqlx::SqlitePool) {
     let token = db::tokens::issue(&pool, id, "test").await.unwrap();
     let wolf = WolfClient::new(socket);
     let app = routes::router(AppState {
+        state_dir: std::env::temp_dir().join("altc-test-state"),
         pool: pool.clone(),
         wolf,
         events: altc_api::events::EventHub::new(),

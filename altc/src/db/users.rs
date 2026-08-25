@@ -55,3 +55,11 @@ pub async fn set_locale(
         .await
         .map(|_| ())
 }
+
+/// Looks a user up by the name they sign in with.
+pub async fn by_name(pool: &SqlitePool, name: &str) -> Result<Option<User>, sqlx::Error> {
+    sqlx::query_as::<_, User>("SELECT * FROM users WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+}

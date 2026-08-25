@@ -13,6 +13,7 @@ use tower::ServiceExt;
 async fn unclaimed() -> (Router, sqlx::SqlitePool) {
     let pool = db::init_memory().await;
     let app = routes::router(AppState {
+        state_dir: std::env::temp_dir().join("altc-test-state"),
         pool: pool.clone(),
         wolf: WolfClient::new("/nonexistent/wolf.sock".into()),
         events: altc_api::events::EventHub::new(),
@@ -135,6 +136,7 @@ async fn an_already_claimed_server_refuses_setup_from_the_start() {
     let pool = db::init_memory().await;
     db::users::insert(&pool, "owner", "owner").await.unwrap();
     let app = routes::router(AppState {
+        state_dir: std::env::temp_dir().join("altc-test-state"),
         pool: pool.clone(),
         wolf: WolfClient::new("/nonexistent/wolf.sock".into()),
         events: altc_api::events::EventHub::new(),

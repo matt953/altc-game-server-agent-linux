@@ -2,6 +2,7 @@ mod apps;
 mod events;
 mod me;
 mod pairing;
+mod recover;
 mod setup;
 mod storage;
 mod users;
@@ -25,6 +26,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/events", get(events::stream))
         .route("/api/v1/server", get(setup::server_info))
         .route("/api/v1/setup", axum::routing::post(setup::claim))
+        .route("/api/v1/recover", axum::routing::post(recover::recover))
         .route("/api/v1/login", axum::routing::post(users::login))
         .route(
             "/api/v1/me/password",
@@ -57,6 +59,11 @@ pub fn router(state: AppState) -> Router {
         // an HTML page, which is a confusing thing for a client to receive.
         .fallback(web::serve)
         .with_state(state)
+}
+
+/// Re-exported so main can warn at startup without reaching into the module.
+pub fn warn_if_recovery_armed(state_dir: &std::path::Path) {
+    recover::warn_if_armed(state_dir);
 }
 
 async fn healthz() -> Json<Value> {
