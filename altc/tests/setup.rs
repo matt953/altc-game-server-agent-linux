@@ -186,3 +186,56 @@ async fn a_weak_or_nameless_claim_is_refused_and_leaves_it_unclaimed() {
     .await;
     assert_eq!(info["setup_complete"], false);
 }
+
+#[tokio::test]
+async fn the_web_ui_is_served_from_the_binary() {
+    let (app, _) = unclaimed().await;
+    let res = app
+        .clone()
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        res.status(),
+        StatusCode::OK,
+        "a fresh server must serve the wizard"
+    );
+    let ctype = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(ctype.starts_with("text/html"), "got {ctype}");
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    assert!(
+        !body.is_empty(),
+        "the bundle must be embedded, not read from disk"
+    );
+}
+
+// A wrong /api path must not silently return HTML: a client parsing JSON would
+// get a page and a confusing error a long way from the cause.
+#[tokio::test]
+async fn an_unknown_api_route_does_not_return_the_web_ui() {
+    let (app, _) = unclaimed().await;
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/does-not-exist")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let ctype = res
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        !ctype.starts_with("text/html"),
+        "an API 404 returned HTML: {ctype}"
+    );
+}

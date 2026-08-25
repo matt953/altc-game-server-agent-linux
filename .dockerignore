@@ -10,3 +10,9 @@
 !docker/supervisord.conf
 !altc
 altc/target
+altc/web-dist
+!altc-web
+# Built and installed inside the image; sending them wastes the context and
+# would overwrite the container's own install.
+altc-web/node_modules
+altc-web/dist

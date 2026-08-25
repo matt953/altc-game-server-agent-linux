@@ -72,10 +72,22 @@ RUN --mount=type=cache,target=/cache/ccache \
     cp $CMAKE_BUILD_DIR/src/fake-udev/fake-udev /wolf/fake-udev
 
 ########################################################
+# The UI is built first and copied into the crate, because the Rust binary
+# embeds it: it has to render at first boot with nothing to fetch.
+FROM node:22-slim AS web-builder
+WORKDIR /web
+# Dependencies are their own layer so a change to the app does not reinstall
+# them on every build.
+COPY altc-web/package.json altc-web/package-lock.json* ./
+RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+COPY altc-web/ .
+RUN npm run build
+
 FROM rust:1-slim AS altc-builder
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake perl && rm -rf /var/lib/apt/lists/*
 WORKDIR /altc
 COPY altc/ .
+COPY --from=web-builder /altc/web-dist ./web-dist
 RUN cargo build --release
 
 FROM $BASE_IMAGE AS runner

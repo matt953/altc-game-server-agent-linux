@@ -5,6 +5,7 @@ mod pairing;
 mod setup;
 mod storage;
 mod users;
+mod web;
 
 use crate::state::AppState;
 use axum::{
@@ -51,6 +52,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/devices/{client_id}/claim", post(pairing::claim))
         .route("/api/v1/clients", get(pairing::clients))
         .route("/api/v1/unpair", post(pairing::unpair))
+        // Anything that is not an API route is the web UI. Declared last so a
+        // missing /api path still 404s as an API rather than quietly returning
+        // an HTML page, which is a confusing thing for a client to receive.
+        .fallback(web::serve)
         .with_state(state)
 }
 

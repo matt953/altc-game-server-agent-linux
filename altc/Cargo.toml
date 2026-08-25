@@ -24,6 +24,8 @@ tokio-stream = { version = "0.1.19", features = ["sync"] }
 futures-util = "0.3.34"
 reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "http2", "json", "blocking"] }
 argon2 = { version = "0.5.3", features = ["password-hash"] }
+rust-embed = { version = "8.12.0", features = ["axum"] }
+mime_guess = "2.0.5"
 
 [profile.release]
 strip = true
